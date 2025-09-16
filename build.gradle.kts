@@ -1,11 +1,10 @@
 plugins {
-  // Versions provided via gradle.properties
-  id("com.android.application") version System.getProperty("agp.version") ?: providers.gradleProperty("agp.version").get() apply false
-  id("com.android.library") version System.getProperty("agp.version") ?: providers.gradleProperty("agp.version").get() apply false
-  id("org.jetbrains.kotlin.android") version System.getProperty("kotlin.version") ?: providers.gradleProperty("kotlin.version").get() apply false
+  id("com.android.application") version "8.6.1" apply false
+  id("com.android.library") version "8.6.1" apply false
+  id("org.jetbrains.kotlin.android") version "2.0.20" apply false
+  id("org.jetbrains.kotlin.plugin.compose") version "2.0.20" apply false
 }
 
 tasks.register("clean", Delete::class) {
   delete(layout.buildDirectory)
 }
-
