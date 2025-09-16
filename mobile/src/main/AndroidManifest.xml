@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest package="com.globespeak" xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:label="GlobeSpeak"
+        android:supportsRtl="true">
+        <!-- Components will be added in subsequent commits -->
+    </application>
+</manifest>
+
