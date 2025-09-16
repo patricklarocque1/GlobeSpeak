@@ -10,6 +10,9 @@
     <application
         android:label="GlobeSpeak"
         android:supportsRtl="true">
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="false" />
         <activity
             android:name=".ui.MainActivity"
             android:exported="true">

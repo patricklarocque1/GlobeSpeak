@@ -86,6 +86,11 @@ class AudioCaptureService : Service() {
     }
 
     private suspend fun captureAndStream(output: OutputStream) {
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "RECORD_AUDIO not granted; aborting capture")
+            return
+        }
         val sampleRate = 16_000
         val channelConfig = AudioFormat.CHANNEL_IN_MONO
         val encoding = AudioFormat.ENCODING_PCM_16BIT
@@ -162,4 +167,3 @@ class AudioCaptureService : Service() {
         private const val NOTIF_ID = 2001
     }
 }
-
