@@ -1,0 +1,41 @@
+# Android/IntelliJ
+*.iml
+.idea/
+.gradle/
+/local.properties
+/.settings/
+/captures/
+.externalNativeBuild/
+.cxx/
+/build/
+**/build/
+/out/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Keystores & signing
+*.jks
+*.keystore
+*.pem
+*.p12
+
+# Artifacts
+*.apk
+*.ap_
+*.aab
+*.ipa
+
+# Logs
+*.log
+
+# Env
+.env
+.env.*
+
+# Kotlin/Java
+*.class
+
+# Android Studio
+navigation.json

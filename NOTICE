@@ -1,0 +1,11 @@
+GlobeSpeak
+
+This product bundles or may incorporate components under the Apache License, Version 2.0.
+Where code from third-party projects is included, their original headers and notices are preserved.
+
+Notices for included software:
+
+- RTranslator (https://github.com/niedev/RTranslator) — Apache-2.0
+  Copyright (c) respective copyright holders.
+
+Additional notices may appear in source files where applicable.
