@@ -16,6 +16,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import com.globespeak.mobile.logging.LogBus
+import com.globespeak.mobile.logging.LogLine
 
 class TranslationService : WearableListenerService() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
@@ -24,15 +28,20 @@ class TranslationService : WearableListenerService() {
     override fun onCreate() {
         super.onCreate()
         ensureNotificationChannel()
+        _running.tryEmit(true)
+        LogBus.log(TAG, "Service created", LogLine.Kind.DATALAYER)
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        _running.tryEmit(false)
+        LogBus.log(TAG, "Service destroyed", LogLine.Kind.DATALAYER)
     }
 
     override fun onChannelOpened(channel: com.google.android.gms.wearable.ChannelClient.Channel) {
         super.onChannelOpened(channel)
         Log.i(TAG, "Channel opened: ${channel.path} from ${channel.nodeId}")
+        LogBus.log(TAG, "Channel opened ${channel.path} from ${channel.nodeId}", LogLine.Kind.DATALAYER)
         if (channel.path != AUDIO_PATH) return
 
         // Keep service in foreground while processing the audio stream
@@ -60,15 +69,23 @@ class TranslationService : WearableListenerService() {
 
                         val pcm = baos.toByteArray()
                         Log.i(TAG, "Finished reading ${pcm.size} bytes. Transcribing…")
+                        LogBus.log(TAG, "Received audio bytes=${pcm.size}", LogLine.Kind.DATALAYER)
                         val transcript = engine.transcribePcm16LeMono16k(pcm)
+                        LogBus.log(TAG, "Transcript: $transcript", LogLine.Kind.ENGINE)
                         val translated = engine.translate(transcript, source = "auto", target = "en")
 
                         // Send translation back to the originating node
                         val bytes = translated.encodeToByteArray()
                         Wearable.getMessageClient(this@TranslationService)
                             .sendMessage(channel.nodeId, TRANSLATION_PATH, bytes)
-                            .addOnSuccessListener { Log.i(TAG, "Sent translation (${bytes.size} bytes)") }
-                            .addOnFailureListener { e -> Log.e(TAG, "Failed to send translation", e) }
+                            .addOnSuccessListener {
+                                Log.i(TAG, "Sent translation (${bytes.size} bytes)")
+                                LogBus.log(TAG, "Sent translation bytes=${bytes.size}", LogLine.Kind.DATALAYER)
+                            }
+                            .addOnFailureListener { e ->
+                                Log.e(TAG, "Failed to send translation", e)
+                                LogBus.log(TAG, "Failed to send translation: ${e.message}", LogLine.Kind.DATALAYER)
+                            }
                     }
                 }.addOnFailureListener { e ->
                     Log.e(TAG, "Failed to get InputStream for channel", e)
@@ -78,6 +95,7 @@ class TranslationService : WearableListenerService() {
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "Error handling channel", t)
+                LogBus.log(TAG, "Error: ${t.message}", LogLine.Kind.DATALAYER)
                 stopForeground(STOP_FOREGROUND_REMOVE)
             }
         }
@@ -115,6 +133,7 @@ class TranslationService : WearableListenerService() {
         const val TRANSLATION_PATH = "/translation"
         private const val NOTIF_CHANNEL_ID = "globespeak.translation"
         private const val NOTIF_ID = 1001
+        private val _running = MutableStateFlow(false)
+        val running = _running.asStateFlow()
     }
 }
-
