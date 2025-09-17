@@ -35,7 +35,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.android.gms.wearable.Node
-import com.google.mlkit.nl.translate.TranslateLanguage
 import java.util.Locale
 
 @Composable
@@ -45,6 +44,7 @@ fun DashboardScreen(vm: DashboardViewModel = viewModel()) {
     val input by vm.input.collectAsState()
     val target by vm.target.collectAsState()
     val result by vm.result.collectAsState()
+    val languages by vm.languages.collectAsState()
 
     val notifLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -64,6 +64,7 @@ fun DashboardScreen(vm: DashboardViewModel = viewModel()) {
         WearConnectionCard(nodes)
 
         QuickTestCard(
+            languages = languages,
             input = input,
             onInputChange = vm::setInput,
             target = target,
@@ -110,6 +111,7 @@ private fun WearConnectionCard(nodes: List<Node>) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun QuickTestCard(
+    languages: List<String>,
     input: String,
     onInputChange: (String) -> Unit,
     target: String,
@@ -117,7 +119,6 @@ private fun QuickTestCard(
     onRun: () -> Unit,
     result: String
 ) {
-    val languages = remember { TranslateLanguage.getAllLanguages().sorted() }
     var expanded by remember { mutableStateOf(false) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -160,7 +161,6 @@ private fun QuickTestCard(
 }
 
 private fun languageDisplay(code: String): String {
-    val tag = TranslateLanguage.fromLanguageTag(code) ?: code
     val locale = Locale(code)
     val name = locale.displayName.replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
     return "$name ($code)"
