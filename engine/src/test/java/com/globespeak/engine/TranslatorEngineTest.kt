@@ -2,6 +2,7 @@ package com.globespeak.engine
 
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TranslatorEngineTest {
@@ -20,4 +21,3 @@ class TranslatorEngineTest {
         assertEquals("[en->es] hello", result)
     }
 }
-

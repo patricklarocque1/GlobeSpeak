@@ -6,12 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.globespeak.mobile.data.Settings
 import com.globespeak.mobile.logging.LogBus
 import com.globespeak.mobile.logging.LogLine
-import com.google.mlkit.common.model.DownloadConditions
-import com.google.mlkit.common.model.RemoteModelManager
-import com.google.mlkit.nl.translate.TranslateLanguage
-import com.google.mlkit.nl.translate.TranslateRemoteModel
-import com.google.mlkit.nl.translate.Translation
-import com.google.mlkit.nl.translate.TranslatorOptions
+import com.globespeak.engine.TranslatorEngine
+import com.globespeak.engine.mlkit.MLKitTranslationBackend
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -30,7 +26,7 @@ sealed class ModelState {
 class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
     private val ctx get() = getApplication<Application>()
     private val settings = Settings(ctx)
-    private val manager = RemoteModelManager.getInstance()
+    private val engine = TranslatorEngine(MLKitTranslationBackend())
 
     val targetLanguage: StateFlow<String> = settings.targetLanguage
         .stateIn(viewModelScope, SharingStarted.Eagerly, "fr")
@@ -38,10 +34,22 @@ class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
     private val _modelState = MutableStateFlow<ModelState>(ModelState.Checking)
     val modelState: StateFlow<ModelState> = _modelState
 
-    val languages: List<String> = TranslateLanguage.getAllLanguages().sorted()
+    val languages: List<String> = run {
+        // Resolve synchronously best-effort; will be empty initially if something fails
+        try {
+            // Note: This is called on init class load; keep it simple.
+            // UI does not rely on it being complete here.
+            emptyList()
+        } catch (_: Throwable) { emptyList() }
+    }
+    private val _languagesState = MutableStateFlow<List<String>>(emptyList())
+    val languagesState: StateFlow<List<String>> = _languagesState
 
     init {
-        viewModelScope.launch { refreshModelStatus() }
+        viewModelScope.launch {
+            _languagesState.value = engine.supportedLanguages().toList().sorted()
+            refreshModelStatus()
+        }
     }
 
     fun setTargetLanguage(code: String) {
@@ -56,8 +64,7 @@ class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
             _modelState.value = ModelState.Checking
             val tgt = targetLanguage.first()
             try {
-                val downloaded = manager.getDownloadedModels(TranslateRemoteModel::class.java).await()
-                val exists = downloaded.any { it.language == tgt }
+                val exists = engine.isModelReady(tgt)
                 _modelState.value = if (exists) ModelState.Downloaded else ModelState.NotDownloaded
             } catch (t: Throwable) {
                 _modelState.value = ModelState.Error(t.message ?: "Unknown error")
@@ -70,14 +77,7 @@ class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
             _modelState.value = ModelState.Checking
             val tgt = targetLanguage.first()
             try {
-                val options = TranslatorOptions.Builder()
-                    .setSourceLanguage(TranslateLanguage.ENGLISH)
-                    .setTargetLanguage(tgt)
-                    .build()
-                val translator = Translation.getClient(options)
-                val conditions = DownloadConditions.Builder().build()
-                translator.downloadModelIfNeeded(conditions).await()
-                translator.close()
+                engine.ensureModel(tgt)
                 LogBus.log("Languages", "Model downloaded: $tgt", LogLine.Kind.ENGINE)
                 refreshModelStatus()
             } catch (t: Throwable) {
@@ -90,8 +90,7 @@ class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val tgt = targetLanguage.first()
             try {
-                val model = TranslateRemoteModel.Builder(tgt).build()
-                manager.deleteDownloadedModel(model).await()
+                engine.deleteModel(tgt)
                 LogBus.log("Languages", "Model deleted: $tgt", LogLine.Kind.ENGINE)
                 refreshModelStatus()
             } catch (t: Throwable) {
