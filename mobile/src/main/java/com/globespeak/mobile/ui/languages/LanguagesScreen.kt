@@ -30,7 +30,7 @@ import java.util.Locale
 fun LanguagesScreen(vm: LanguagesViewModel = viewModel()) {
     val target by vm.targetLanguage.collectAsState()
     val model by vm.modelState.collectAsState()
-    val languages = vm.languages
+    val languages by vm.languagesState.collectAsState()
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Card(Modifier.fillMaxWidth()) {

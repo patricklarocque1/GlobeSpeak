@@ -8,6 +8,7 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.globespeak.engine.TranslatorEngine
+import com.globespeak.engine.mlkit.MLKitTranslationBackend
 import com.google.android.gms.wearable.ChannelClient
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
@@ -20,10 +21,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.globespeak.mobile.logging.LogBus
 import com.globespeak.mobile.logging.LogLine
+import com.globespeak.mobile.data.Settings
+import kotlinx.coroutines.flow.first
 
 class TranslationService : WearableListenerService() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
-    private val engine by lazy { TranslatorEngine() }
+    private val engine by lazy { TranslatorEngine(MLKitTranslationBackend()) }
+    private val settings by lazy { Settings(this) }
 
     override fun onCreate() {
         super.onCreate()
@@ -72,7 +76,9 @@ class TranslationService : WearableListenerService() {
                         LogBus.log(TAG, "Received audio bytes=${pcm.size}", LogLine.Kind.DATALAYER)
                         val transcript = engine.transcribePcm16LeMono16k(pcm)
                         LogBus.log(TAG, "Transcript: $transcript", LogLine.Kind.ENGINE)
-                        val translated = engine.translate(transcript, source = "auto", target = "en")
+                        val tgt = try { settings.targetLanguage.first() } catch (_: Throwable) { "en" }
+                        try { engine.ensureModel(tgt) } catch (_: Throwable) {}
+                        val translated = engine.translate(transcript, source = "auto", target = tgt)
 
                         // Send translation back to the originating node
                         val bytes = translated.encodeToByteArray()
