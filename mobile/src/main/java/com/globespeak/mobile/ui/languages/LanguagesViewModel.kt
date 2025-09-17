@@ -34,7 +34,9 @@ data class LanguagesUi(
     val modelState: ModelState = ModelState.Checking,
     val engineMode: String = "standard", // "standard" | "advanced"
     val deviceCapable: Boolean = false,
-    val nllbModelPresent: Boolean = false
+    val nllbModelPresent: Boolean = false,
+    val activeEngine: String = "standard",
+    val fallbackReason: String? = null
 )
 
 class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
@@ -66,6 +68,7 @@ class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
             val key = androidx.datastore.preferences.core.stringPreferencesKey(com.globespeak.shared.Bridge.DS_TRANSLATION_ENGINE)
             ctx.appDataStore.data.collectLatest { prefs ->
                 _ui.update { it.copy(engineMode = prefs[key] ?: "standard") }
+                refreshEngineSelectionInfo()
             }
         }
     }
@@ -80,6 +83,7 @@ class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
     fun setEngineMode(mode: String) = viewModelScope.launch {
         val key = androidx.datastore.preferences.core.stringPreferencesKey(com.globespeak.shared.Bridge.DS_TRANSLATION_ENGINE)
         ctx.appDataStore.edit { it[key] = mode }
+        refreshEngineSelectionInfo()
     }
 
     fun checkModel(lang: String = _ui.value.selectedTarget) = viewModelScope.launch {
@@ -106,5 +110,12 @@ class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
         runCatching { engine.deleteModel(lang) }
         LogBus.log("Languages", "Model deleted: $lang", LogLine.Kind.ENGINE)
         checkModel(lang)
+        refreshEngineSelectionInfo()
+    }
+
+    private fun refreshEngineSelectionInfo() = viewModelScope.launch {
+        val prefs = ctx.appDataStore
+        val (_, info) = com.globespeak.engine.backend.BackendFactory.buildWithInfo(ctx, prefs)
+        _ui.update { it.copy(activeEngine = info.active, fallbackReason = info.reason) }
     }
 }

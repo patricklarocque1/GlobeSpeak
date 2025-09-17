@@ -19,6 +19,21 @@ object BackendFactory {
         return select(selected, capability, models, context)
     }
 
+    data class EngineSelectionInfo(
+        val selected: String,   // "standard" | "advanced"
+        val active: String,     // "standard" | "advanced"
+        val reason: String?     // e.g., "model missing", "device not capable", null if OK
+    )
+
+    fun buildWithInfo(context: Context, prefs: DataStore<Preferences>): Pair<TranslationBackend, EngineSelectionInfo> {
+        val selectedPref = readEnginePrefSync(prefs) ?: "standard"
+        val capability = DeviceCapability(context)
+        val models = ModelLocator(context)
+        val (active, reason) = resolveActive(selectedPref, capability, models)
+        val backend = if (active == "advanced") NllbOnnxTranslationBackend(context, models) else MLKitTranslationBackend()
+        return backend to EngineSelectionInfo(selected = selectedPref, active = active, reason = reason)
+    }
+
     internal fun select(
         selected: String?,
         capability: DeviceCapability,
@@ -40,6 +55,13 @@ object BackendFactory {
     ): String {
         val wantAdvanced = selected == "advanced"
         return if (wantAdvanced && capability.supportsAdvanced() && models.hasNllbModel()) "nllb" else "mlkit"
+    }
+
+    private fun resolveActive(selected: String, capability: DeviceCapability, models: ModelLocator): Pair<String, String?> {
+        if (selected != "advanced") return "standard" to null
+        if (!capability.supportsAdvanced()) return "standard" to "device not capable"
+        if (!models.hasNllbModel()) return "standard" to "model missing"
+        return "advanced" to null
     }
 
     private fun readEnginePrefSync(prefs: DataStore<Preferences>): String? = runBlocking {

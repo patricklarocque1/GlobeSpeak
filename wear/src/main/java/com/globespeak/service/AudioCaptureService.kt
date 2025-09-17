@@ -13,8 +13,12 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.globespeak.engine.proto.AudioFramer
+import com.globespeak.audio.VadGate
+import com.globespeak.shared.Bridge
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.ChannelClient
+import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.CancellationException
@@ -32,6 +36,7 @@ class AudioCaptureService : Service() {
     private var recordJob: Job? = null
     private var channel: ChannelClient.Channel? = null
     private var out: OutputStream? = null
+    private var heartbeatJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -66,11 +71,18 @@ class AudioCaptureService : Service() {
                 }
                 Log.i(TAG, "Opening channel to node ${node.id}")
                 val channelClient = Wearable.getChannelClient(this@AudioCaptureService)
-                val ch = Tasks.await(channelClient.openChannel(node.id, AUDIO_PATH))
+                val ch = Tasks.await(channelClient.openChannel(node.id, Bridge.PATH_AUDIO_PCM16))
                 channel = ch
                 out = Tasks.await(channelClient.getOutputStream(ch))
 
-                captureAndStream(out!!)
+                // Send handshake
+                Wearable.getMessageClient(this@AudioCaptureService)
+                    .sendMessage(node.id, Bridge.PATH_CONTROL_HANDSHAKE, ByteArray(0))
+
+                // Start heartbeat
+                heartbeatJob = scope.launch { heartbeatLoop(node.id) }
+
+                captureAndStream(out!!, node.id)
             } catch (ce: CancellationException) {
                 // ignore
             } catch (t: Throwable) {
@@ -79,13 +91,14 @@ class AudioCaptureService : Service() {
                 try { out?.flush() } catch (_: Throwable) {}
                 try { out?.close() } catch (_: Throwable) {}
                 channel?.let { Wearable.getChannelClient(this@AudioCaptureService).close(it) }
+                heartbeatJob?.cancel()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
         }
     }
 
-    private suspend fun captureAndStream(output: OutputStream) {
+    private suspend fun captureAndStream(output: OutputStream, nodeId: String) {
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED) {
             Log.w(TAG, "RECORD_AUDIO not granted; aborting capture")
@@ -95,8 +108,14 @@ class AudioCaptureService : Service() {
         val channelConfig = AudioFormat.CHANNEL_IN_MONO
         val encoding = AudioFormat.ENCODING_PCM_16BIT
         val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, encoding)
-        val bufferSize = (minBuf.coerceAtLeast(4096) / 2) * 2 // even number
+        val bufferSize = (minBuf.coerceAtLeast(8192) / 2) * 2 // even number, >= 8k
         val buffer = ByteArray(bufferSize)
+
+        val vad = VadGate(sampleRate = sampleRate)
+        var seq = 1
+        val chunkBytesTarget = 10_240 // ~320ms at 16kHz * 2 bytes
+        val chunkBuf = ByteArray(chunkBytesTarget)
+        var chunkFill = 0
 
         val recorder = AudioRecord(
             MediaRecorder.AudioSource.VOICE_RECOGNITION,
@@ -112,7 +131,38 @@ class AudioCaptureService : Service() {
             while (scope.isActive && recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 val read = recorder.read(buffer, 0, buffer.size)
                 if (read > 0) {
-                    output.write(buffer, 0, read)
+                    // VAD gating
+                    // Interpret bytes as PCM16 shorts for VAD
+                    val asShorts = ShortArray(read / 2)
+                    for (i in 0 until asShorts.size) {
+                        val lo = buffer[i * 2].toInt() and 0xFF
+                        val hi = buffer[i * 2 + 1].toInt()
+                        asShorts[i] = ((hi shl 8) or lo).toShort()
+                    }
+                    val speaking = vad.feed(asShorts)
+                    if (speaking) {
+                        var off = 0
+                        while (off < read) {
+                            val toCopy = minOf(chunkBytesTarget - chunkFill, read - off)
+                            System.arraycopy(buffer, off, chunkBuf, chunkFill, toCopy)
+                            chunkFill += toCopy
+                            off += toCopy
+                            if (chunkFill == chunkBytesTarget) {
+                                val framed = AudioFramer.frame(seq++, System.currentTimeMillis(), chunkBuf)
+                                output.write(framed)
+                                chunkFill = 0
+                            }
+                        }
+                    } else {
+                        // If trailing silence and we have a partial chunk, flush it
+                        if (chunkFill > 0 && chunkFill >= 2048) {
+                            val payload = ByteArray(chunkFill)
+                            System.arraycopy(chunkBuf, 0, payload, 0, chunkFill)
+                            val framed = AudioFramer.frame(seq++, System.currentTimeMillis(), payload)
+                            output.write(framed)
+                            chunkFill = 0
+                        }
+                    }
                 } else if (read < 0) {
                     Log.w(TAG, "AudioRecord read error: $read")
                     break
@@ -122,6 +172,16 @@ class AudioCaptureService : Service() {
             try { recorder.stop() } catch (_: Throwable) {}
             recorder.release()
             Log.i(TAG, "Recording stopped")
+        }
+    }
+
+    private suspend fun heartbeatLoop(nodeId: String) {
+        val mc = Wearable.getMessageClient(this)
+        while (scope.isActive) {
+            try {
+                mc.sendMessage(nodeId, Bridge.PATH_CONTROL_HEARTBEAT, System.currentTimeMillis().toString().toByteArray())
+            } catch (_: Throwable) { /* ignore */ }
+            kotlinx.coroutines.delay(5_000)
         }
     }
 
@@ -162,7 +222,6 @@ class AudioCaptureService : Service() {
         private const val TAG = "AudioCaptureService"
         const val ACTION_START = "com.globespeak.action.START_CAPTURE"
         const val ACTION_STOP = "com.globespeak.action.STOP_CAPTURE"
-        const val AUDIO_PATH = "/audio"
         private const val NOTIF_CHANNEL_ID = "globespeak.capture"
         private const val NOTIF_ID = 2001
     }

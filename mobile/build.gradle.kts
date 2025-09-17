@@ -14,6 +14,9 @@ android {
     targetSdk = (project.findProperty("targetSdkMobile") as String).toInt()
     versionCode = 1
     versionName = "0.1.0"
+    ndk {
+      abiFilters += listOf("arm64-v8a", "x86_64")
+    }
   }
 
   buildTypes {
@@ -68,6 +71,7 @@ dependencies {
   implementation("com.google.android.gms:play-services-wearable:${project.findProperty("play.services.wearable.version")}")
   implementation("com.google.mlkit:translate:17.0.2")
   implementation("com.google.mlkit:language-id:17.0.0")
+  implementation("com.jakewharton.timber:timber:5.0.1")
 
   testImplementation("junit:junit:4.13.2")
 }

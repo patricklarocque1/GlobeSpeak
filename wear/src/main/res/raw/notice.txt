@@ -1,0 +1,22 @@
+GlobeSpeak — Notices & Attributions
+
+This project may incorporate the following components. Original licenses, notices, and headers are preserved in their respective source files and distributions.
+
+— Runtime / Libraries —
+• ONNX Runtime — © Microsoft. License: MIT. See https://github.com/microsoft/onnxruntime
+• Kotlin coroutines — © JetBrains/Contributors. License: Apache-2.0.
+
+— Translation Backends —
+• ML Kit Translation & Language ID — © Google. See ML Kit terms; on‑device models downloaded at runtime.
+• NLLB (No Language Left Behind) models — © Meta and contributors. **Refer to the specific model distribution for license and usage terms.** Do not redistribute model files unless permitted by their license.
+
+— Tokenization —
+• SentencePiece tokenizer and/or derived utilities — © Google/Contributors. License: Apache-2.0.
+  If you imported or ported SentencePiece code, include the corresponding LICENSE/NOTICE excerpts.
+
+— Upstream Inspiration —
+• RTranslator — Apache-2.0. https://github.com/niedev/RTranslator
+
+Notes:
+• Advanced backend model files (`nllb.onnx` , `tokenizer.model` ) are **sideloaded** by the user into app private storage (`filesDir/models/nllb/` ). They are **not** shipped in the APK/AAB.
+• GlobeSpeak operates fully **offline** for translation. User speech/text is not sent to external services.

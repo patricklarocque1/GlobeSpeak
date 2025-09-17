@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.MaterialTheme
@@ -34,10 +36,12 @@ import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.Wearable
 import com.globespeak.service.AudioCaptureService
 import com.globespeak.shared.Bridge
+import com.globespeak.ui.about.AboutActivity
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListener {
     private val messageClient by lazy { Wearable.getMessageClient(this) }
-    private lateinit var vm: WatchViewModel
+    private val vm: WatchViewModel by viewModels()
 
     private val requestMicPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -48,7 +52,6 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            vm = viewModel()
             val listState = rememberScalingLazyListState()
 
             MaterialTheme {
@@ -98,9 +101,16 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
 
     override fun onMessageReceived(event: com.google.android.gms.wearable.MessageEvent) {
         when (event.path) {
-            Bridge.PATH_TRANSLATION -> {
-                val text = String(event.data)
-                vm.addTranslation(text)
+            Bridge.PATH_TEXT_OUT -> {
+                val s = String(event.data)
+                try {
+                    val json = JSONObject(s)
+                    val type = json.optString("type", "final")
+                    val text = json.optString("text", "")
+                    if (type == "partial") vm.addPartial(text) else vm.addFinal(text)
+                } catch (_: Throwable) {
+                    vm.addFinal(s)
+                }
             }
             Bridge.PATH_SETTINGS_TARGET_LANG -> {
                 val tag = event.data?.toString(Charsets.UTF_8) ?: return
@@ -146,6 +156,13 @@ private fun WatchScaffold(
                 Chip(onClick = {}, label = { Text("${m.from}: ${m.text}") })
             }
             item { Chip(onClick = onClear, label = { Text("Clear") }) }
+            item {
+                val ctx = LocalContext.current
+                Chip(
+                    onClick = { ctx.startActivity(Intent(ctx, AboutActivity::class.java)) },
+                    label = { Text("About & Licenses") }
+                )
+            }
         }
     }
 }

@@ -10,6 +10,21 @@ GlobeSpeak is a **hybrid Wear OS translator**. The watch acts as a *thin client*
 
 ---
 
+## Mission for coding agents
+Implement, maintain, and test a hybrid Wear OS translator. The watch is a thin client (UI + mic), the phone performs **offline** STT/translation and sends results back via the Data Layer. Keep the app **offline‑only**.
+
+## DO (allowed)
+- **SPM / ONNX wiring** for the advanced backend (NLLB‑ONNX): tokenizer integration, prompt building, ONNX session creation, greedy/incremental decoding.
+- **ML Kit** integration for the standard backend: Language ID + on‑device translation with model download/management.
+- Data Layer code: `ChannelClient`  (audio), `MessageClient`  (text/settings).
+- Settings & UX: engine toggle (Standard vs Advanced), model import (SAF), readiness checks, and fallback logic.
+- Tests: tokenization round‑trip, factory selection matrix, UI state transitions, non‑device benchmarks.
+
+## DON’T (forbidden)
+- **No network/cloud translation** or calls that upload user audio/text.
+- **No model bundling** in the APK/AAB (large files). Use sideload or in‑app import only.
+- **Don’t change** the audio format/signature without updating both watch and phone sides and tests.
+
 ## Local setup
 - **JDK 17+**
 - **Android Studio (latest stable)** with Android SDKs + Wear OS tools
@@ -42,6 +57,12 @@ Unit tests & lint:
 ./gradlew lint
 ```
 
+## Build commands
+```bash
+./gradlew :mobile:assembleDebug :wear:assembleDebug
+./gradlew :engine:test :mobile:test
+```
+
 ---
 
 ## SDK targets (2025)
@@ -51,13 +72,22 @@ Unit tests & lint:
 
 ---
 
-## Data Layer contracts
-- **Audio watch → phone**: PCM **16‑bit, 16 kHz, mono, little‑endian**; chunk 4–32 KB via `ChannelClient`
-- **Text phone → watch**: short UTF‑8 messages via `MessageClient` (`/translation` path)
+## Paths & contracts
+- Audio: watch → phone via `ChannelClient`  at `"/audio"` ; format **PCM 16‑bit, 16 kHz, mono, LE**.
+- Translation text: phone → watch via `MessageClient`  at `"/translation"` .
+- Settings sync: `"/settings/target_lang"`  (phone→watch), `"/settings/request"`  (watch→phone).
 - Keep both apps’ services **foreground** with visible notifications
 - Reconnect with exponential backoff when a node disconnects
 
 ---
+
+## File locations (advanced backend)
+```
+filesDir/models/nllb/
+  nllb.onnx
+  tokenizer.model
+```
+Use `ModelLocator`  to resolve paths; do not hardcode external storage. The tokenizer is a **SentencePiece** `.model` file loaded by a vendored, minimal decoder; no JNI is required.
 
 ## Engine facade (what agents should call)
 ```kotlin
@@ -94,10 +124,9 @@ Tasks to avoid unless asked:
 ---
 
 ## PR rules
-- Title: `[GlobeSpeak] <change>`
-- Must pass `test` and `lint`
-- For UI changes on watch, include a short screen recording or screenshot
-- Keep commits focused; prefer small, reviewable PRs
+- Keep commits focused; one logical change each.
+- If advanced backend is selected but not available, **fallback** to Standard and log the reason.
+- Include screenshots/GIFs for UI changes and benchmark results (if relevant).
 
 ---
 

@@ -24,17 +24,29 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Info
+import com.globespeak.mobile.ui.about.AboutScreen
+import com.globespeak.mobile.ui.bench.BenchScreen
 
 sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     data object Dashboard : Screen("dashboard", "Dashboard", Icons.Filled.Home)
     data object Languages : Screen("languages", "Languages", Icons.Filled.Language)
     data object Logs : Screen("logs", "Logs", Icons.Filled.List)
+    data object About : Screen("about", "About", Icons.Filled.Info)
+    data object Bench : Screen("bench", "Bench", Icons.Filled.Info)
 }
 
 @Composable
 fun AppNav() {
     val navController = rememberNavController()
-    val items = listOf(Screen.Dashboard, Screen.Languages, Screen.Logs)
+    val isDebug = (androidx.compose.ui.platform.LocalContext.current.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    val items = buildList {
+        add(Screen.Dashboard)
+        add(Screen.Languages)
+        add(Screen.Logs)
+        if (isDebug) add(Screen.Bench)
+        add(Screen.About)
+    }
 
     Scaffold(
         bottomBar = {
@@ -66,6 +78,8 @@ fun AppNav() {
             composable(Screen.Dashboard.route) { DashboardScreen() }
             composable(Screen.Languages.route) { LanguagesScreen() }
             composable(Screen.Logs.route) { LogsScreen() }
+            composable(Screen.About.route) { AboutScreen() }
+            if (isDebug) composable(Screen.Bench.route) { BenchScreen() }
         }
     }
 }
