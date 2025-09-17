@@ -3,16 +3,16 @@ package com.globespeak.mobile.ui.languages
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
@@ -28,23 +28,29 @@ import java.util.Locale
 
 @Composable
 fun LanguagesScreen(vm: LanguagesViewModel = viewModel()) {
-    val target by vm.targetLanguage.collectAsState()
-    val model by vm.modelState.collectAsState()
-    val languages by vm.languagesState.collectAsState()
+    val ui by vm.ui.collectAsState()
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Source language: Auto-detect")
-                TargetLanguagePicker(languages, target, onChange = vm::setTargetLanguage)
+                TargetLanguagePicker(ui.supported, ui.selectedTarget, onChange = vm::setTarget)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Wi‑Fi only downloads")
+                    Switch(checked = ui.wifiOnly, onCheckedChange = vm::toggleWifiOnly)
+                }
             }
         }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Model status: ${modelLabel(model)}")
+                Text("Model status: ${modelLabel(ui.modelState)}")
+                if (ui.modelState is ModelState.Downloading) {
+                    CircularProgressIndicator()
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = vm::downloadModel) { Text("Download model") }
-                    Button(onClick = vm::deleteModel) { Text("Delete model") }
+                    Button(onClick = vm::downloadModel, enabled = ui.modelState is ModelState.Idle || ui.modelState is ModelState.Error) { Text("Download") }
+                    Button(onClick = vm::deleteModel, enabled = ui.modelState is ModelState.Ready) { Text("Delete") }
+                    Button(onClick = { vm.checkModel() }) { Text("Check") }
                 }
             }
         }
@@ -80,8 +86,9 @@ private fun languageName(code: String): String =
         " ($code)"
 
 private fun modelLabel(state: ModelState): String = when (state) {
+    is ModelState.Idle -> "Idle"
     is ModelState.Checking -> "Checking…"
-    is ModelState.Downloaded -> "Downloaded"
-    is ModelState.NotDownloaded -> "Not downloaded"
+    is ModelState.Downloading -> "Downloading…"
+    is ModelState.Ready -> "Ready"
     is ModelState.Error -> "Error: ${state.message}"
 }

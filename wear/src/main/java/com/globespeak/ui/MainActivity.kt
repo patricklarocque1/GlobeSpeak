@@ -33,6 +33,7 @@ import androidx.wear.compose.material.rememberScalingLazyListState
 import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.Wearable
 import com.globespeak.service.AudioCaptureService
+import com.globespeak.shared.Bridge
 
 class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListener {
     private val messageClient by lazy { Wearable.getMessageClient(this) }
@@ -64,6 +65,14 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
         super.onResume()
         messageClient.addListener(this)
         vm.refreshNodes()
+        // Request settings if unknown
+        if (vm.targetLang.value == "—") {
+            Wearable.getNodeClient(this).connectedNodes.addOnSuccessListener { nodes ->
+                nodes.firstOrNull()?.let { node ->
+                    messageClient.sendMessage(node.id, Bridge.PATH_SETTINGS_REQUEST, ByteArray(0))
+                }
+            }
+        }
     }
 
     override fun onPause() {
@@ -88,9 +97,15 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
     }
 
     override fun onMessageReceived(event: com.google.android.gms.wearable.MessageEvent) {
-        if (event.path == "/translation") {
-            val text = String(event.data)
-            vm.addTranslation(text)
+        when (event.path) {
+            Bridge.PATH_TRANSLATION -> {
+                val text = String(event.data)
+                vm.addTranslation(text)
+            }
+            Bridge.PATH_SETTINGS_TARGET_LANG -> {
+                val tag = event.data?.toString(Charsets.UTF_8) ?: return
+                vm.setTargetLang(tag)
+            }
         }
     }
 }
@@ -106,6 +121,7 @@ private fun WatchScaffold(
     val status by vm.status.collectAsState()
     val capturing by vm.capturing.collectAsState()
     val items by vm.messages.collectAsState()
+    val targetLang by vm.targetLang.collectAsState()
 
     Scaffold(
         timeText = {},
@@ -118,6 +134,7 @@ private fun WatchScaffold(
             contentPadding = PaddingValues(bottom = 8.dp)
         ) {
             item { Text(statusLabel(status)) }
+            item { Text("Target: ${displayLang(targetLang)}") }
             item {
                 val isCapturing = capturing
                 Button(onClick = { if (isCapturing) onStop() else onStart() }) {
@@ -139,3 +156,7 @@ private fun statusLabel(s: WatchStatus) = when (s) {
     WatchStatus.Listening -> "Listening"
     WatchStatus.Translating -> "Translating"
 }
+
+private fun displayLang(tag: String): String = try {
+    if (tag == "—") tag else java.util.Locale(tag).displayLanguage
+} catch (_: Throwable) { tag }
