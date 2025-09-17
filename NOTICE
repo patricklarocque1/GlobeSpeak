@@ -9,3 +9,11 @@ Notices for included software:
   Copyright (c) respective copyright holders.
 
 Additional notices may appear in source files where applicable.
+ 
+Onnx Runtime
+- ONNX Runtime for Android (https://github.com/microsoft/onnxruntime) — MIT License
+   © Microsoft Corporation. See project for full license details.
+
+NLLB
+- NLLB (No Language Left Behind) models by Meta AI (https://ai.facebook.com/research/no-language-left-behind/)
+  Use of the models is subject to Meta's model license. Models are not distributed with this app; users may sideload them.
