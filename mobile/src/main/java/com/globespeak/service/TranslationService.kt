@@ -77,7 +77,10 @@ class TranslationService : WearableListenerService() {
                         val transcript = engine.transcribePcm16LeMono16k(pcm)
                         LogBus.log(TAG, "Transcript: $transcript", LogLine.Kind.ENGINE)
                         val tgt = try { settings.targetLanguage.first() } catch (_: Throwable) { "en" }
-                        try { engine.ensureModel(tgt) } catch (_: Throwable) {}
+                        LogBus.log(TAG, "Model ensure (target=$tgt)", LogLine.Kind.ENGINE)
+                        try { engine.ensureModel(tgt); LogBus.log(TAG, "Model Ready: $tgt", LogLine.Kind.ENGINE) } catch (e: Throwable) {
+                            LogBus.log(TAG, "Model Error: ${e.message}", LogLine.Kind.ENGINE)
+                        }
                         val translated = engine.translate(transcript, source = "auto", target = tgt)
 
                         // Send translation back to the originating node
