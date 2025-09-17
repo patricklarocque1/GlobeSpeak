@@ -1,7 +1,7 @@
 # AGENTS.md — GlobeSpeak (Wear OS + Android)
 
 ## Project overview
-GlobeSpeak is a **hybrid Wear OS translator**. The watch acts as a *thin client* (UI + mic capture) and the phone runs **STT (Whisper)** + **on‑device translation** (NLLB or **ML Kit Translation**) fully offline. The watch and phone communicate over the **Wear OS Data Layer** (audio via `ChannelClient`, translated text via `MessageClient`).
+GlobeSpeak is a **hybrid Wear OS translator**. The watch acts as a *thin client* (UI + mic capture) and the phone runs **STT (Whisper)** + **on-device translation** (NLLB or **ML Kit Translation**) fully offline. The watch and phone communicate over the **Wear OS Data Layer** (audio via `ChannelClient`, translated text via `MessageClient`).
 
 ### Modules
 - `mobile/` — Android (phone) app. Hosts the **ForegroundService** that performs STT + translation and replies to the watch.
@@ -11,18 +11,18 @@ GlobeSpeak is a **hybrid Wear OS translator**. The watch acts as a *thin client*
 ---
 
 ## Mission for coding agents
-Implement, maintain, and test a hybrid Wear OS translator. The watch is a thin client (UI + mic), the phone performs **offline** STT/translation and sends results back via the Data Layer. Keep the app **offline‑only**.
+Implement, maintain, and test a hybrid Wear OS translator. The watch is a thin client (UI + mic), the phone performs **offline** STT/translation and sends results back via the Data Layer. Keep the app **offline-only**.
 
 ## DO (allowed)
-- **SPM / ONNX wiring** for the advanced backend (NLLB‑ONNX): tokenizer integration, prompt building, ONNX session creation, greedy/incremental decoding.
-- **ML Kit** integration for the standard backend: Language ID + on‑device translation with model download/management.
-- Data Layer code: `ChannelClient`  (audio), `MessageClient`  (text/settings).
+- **SPM / ONNX wiring** for the advanced backend (NLLB-ONNX): tokenizer integration, prompt building, ONNX session creation, greedy/incremental decoding.
+- **ML Kit** integration for the standard backend: Language ID + on-device translation with model download/management.
+- Data Layer code: `ChannelClient` (audio), `MessageClient` (text/settings).
 - Settings & UX: engine toggle (Standard vs Advanced), model import (SAF), readiness checks, and fallback logic.
-- Tests: tokenization round‑trip, factory selection matrix, UI state transitions, non‑device benchmarks.
+- Tests: tokenization round-trip, factory selection matrix, UI state transitions, non-device benchmarks.
 
 ## DON’T (forbidden)
 - **No network/cloud translation** or calls that upload user audio/text.
-- **No model bundling** in the APK/AAB (large files). Use sideload or in‑app import only.
+- **No model bundling** in the APK/AAB (large files). Use sideload or in-app import only.
 - **Don’t change** the audio format/signature without updating both watch and phone sides and tests.
 
 ## Local setup
@@ -67,17 +67,17 @@ Unit tests & lint:
 
 ## SDK targets (2025)
 - **Phone**: `compileSdk=35`, `targetSdk=35` (Android 15)
-- **Wear** : `compileSdk=35`, `targetSdk=34` (Wear OS Play policy)
+- **Wear**: `compileSdk=35`, `targetSdk=34` (Wear OS Play policy)
 - **minSdk**: `mobile 26+`; `wear 30+` (adjust if you must support Wear OS 2)
 
 ---
 
 ## Paths & contracts
-- Audio: watch → phone via `ChannelClient`  at `"/audio"` ; format **PCM 16‑bit, 16 kHz, mono, LE**.
-- Translation text: phone → watch via `MessageClient`  at `"/translation"` .
-- Settings sync: `"/settings/target_lang"`  (phone→watch), `"/settings/request"`  (watch→phone).
-- Keep both apps’ services **foreground** with visible notifications
-- Reconnect with exponential backoff when a node disconnects
+- Audio: watch → phone via `ChannelClient` at `"/audio"`; format **PCM 16-bit, 16 kHz, mono, LE**.
+- Translation text: phone → watch via `MessageClient` at `"/translation"`.
+- Settings sync: `"/settings/target_lang"` (phone → watch), `"/settings/request"` (watch → phone).
+- Keep both apps’ services **foreground** with visible notifications.
+- Reconnect with exponential backoff when a node disconnects.
 
 ---
 
@@ -87,7 +87,7 @@ filesDir/models/nllb/
   nllb.onnx
   tokenizer.model
 ```
-Use `ModelLocator`  to resolve paths; do not hardcode external storage. The tokenizer is a **SentencePiece** `.model` file loaded by a vendored, minimal decoder; no JNI is required.
+Use `ModelLocator` to resolve paths; do not hardcode external storage. The tokenizer is a **SentencePiece** `.model` file loaded by a vendored, minimal decoder; no JNI is required.
 
 ## Engine facade (what agents should call)
 ```kotlin
@@ -102,38 +102,38 @@ class TranslatorEngine {
 ---
 
 ## Safe tasks for coding agents
-- Wire **ChannelClient** send/receive (watch ↔ phone)
-- Implement **VAD** on watch; only stream while speaking
-- Integrate **ML Kit Translation** and download language models as needed
-- Add error handling, retries, and lifecycle hardening for services
-- Write unit tests for `TranslatorEngine` facade and Data Layer helpers
-- Improve Compose UI (state badges; conversation list; permissions prompt)
+- Wire **ChannelClient** send/receive (watch ↔ phone).
+- Implement **VAD** on watch; only stream while speaking.
+- Integrate **ML Kit Translation** and download language models as needed.
+- Add error handling, retries, and lifecycle hardening for services.
+- Write unit tests for `TranslatorEngine` facade and Data Layer helpers.
+- Improve Compose UI (state badges; conversation list; permissions prompt).
 
 Tasks to avoid unless asked:
-- Changing audio format/signature
-- Adding cloud APIs or sending speech/text to external services
-- Large refactors across all modules at once
+- Changing audio format/signature.
+- Adding cloud APIs or sending speech/text to external services.
+- Large refactors across all modules at once.
 
 ---
 
 ## CI assumptions
-- Gradle builds for `mobile` and `wear`
-- JDK 17
-- Optional Android SDK setup step if missing on the runner
+- Gradle builds for `mobile` and `wear`.
+- JDK 17.
+- Optional Android SDK setup step if missing on the runner.
 
 ---
 
 ## PR rules
 - Keep commits focused; one logical change each.
-- If advanced backend is selected but not available, **fallback** to Standard and log the reason.
+- If the advanced backend is selected but not available, **fallback** to Standard and log the reason.
 - Include screenshots/GIFs for UI changes and benchmark results (if relevant).
 
 ---
 
 ## Security & privacy
-- No external network for STT/translation by default (offline only)
-- Handle microphone permission on watch responsibly
-- Do not log raw audio; redact PII from logs
+- No external network for STT/translation by default (offline only).
+- Handle microphone permission on watch responsibly.
+- Do not log raw audio; redact PII from logs.
 
 ---
 
