@@ -38,17 +38,14 @@ object TextNormalizer {
     }
 
     private fun isCjk(ch: Char): Boolean {
-        val block = Character.UnicodeBlock.of(ch)
-        return block === Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
-                block === Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A ||
-                block === Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B ||
-                block === Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_C ||
-                block === Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_D ||
-                block === Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_E ||
-                block === Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_F ||
-                block === Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS ||
-                block === Character.UnicodeBlock.HIRAGANA ||
-                block === Character.UnicodeBlock.KATAKANA ||
-                block === Character.UnicodeBlock.HANGUL_SYLLABLES
+        val blockName = Character.UnicodeBlock.of(ch)?.toString() ?: return false
+        if (blockName == "HIRAGANA" ||
+            blockName == "KATAKANA" ||
+            blockName == "HANGUL_SYLLABLES" ||
+            blockName == "CJK_COMPATIBILITY_IDEOGRAPHS"
+        ) {
+            return true
+        }
+        return blockName.startsWith("CJK_UNIFIED_IDEOGRAPHS")
     }
 }
