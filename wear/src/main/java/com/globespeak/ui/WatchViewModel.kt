@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.gms.wearable.Node
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,8 +35,18 @@ class WatchViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshNodes() {
         viewModelScope.launch {
-            val nodes = Wearable.getNodeClient(ctx).connectedNodes.await()
-            _status.value = if (nodes.isEmpty()) WatchStatus.Disconnected else if (_capturing.value) WatchStatus.Listening else WatchStatus.Ready
+            try {
+                val nodes = Wearable.getNodeClient(ctx).connectedNodes.await()
+                _status.value = if (nodes.isEmpty()) WatchStatus.Disconnected else if (_capturing.value) WatchStatus.Listening else WatchStatus.Ready
+            } catch (e: ApiException) {
+                if (e.statusCode == ConnectionResult.API_UNAVAILABLE) {
+                    _status.value = if (_capturing.value) WatchStatus.Listening else WatchStatus.Disconnected
+                } else {
+                    _status.value = WatchStatus.Disconnected
+                }
+            } catch (_: Throwable) {
+                _status.value = WatchStatus.Disconnected
+            }
         }
     }
 
@@ -54,4 +66,3 @@ class WatchViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clear() { _messages.value = emptyList() }
 }
-
