@@ -17,12 +17,16 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 data class SPMModel(
-    val pieces: List<String>,
+    val pieces: List<Piece>,
     val bosId: Int? = null,
     val eosId: Int? = null,
     val unkId: Int? = null
 ) {
-    fun indexOf(piece: String): Int? = pieces.indexOf(piece).let { if (it >= 0) it else null }
+    data class Piece(val text: String, val score: Float, val type: Type) {
+        enum class Type { NORMAL, UNKNOWN, CONTROL, USER_DEFINED, BYTE, UNUSED }
+    }
+
+    fun indexOf(piece: String): Int? = pieces.indexOfFirst { it.text == piece }.takeIf { it >= 0 }
 
     companion object {
         fun load(file: File): SPMModel {
@@ -31,63 +35,85 @@ data class SPMModel(
 
         private fun parse(inp: InputStream): SPMModel {
             val data = inp.readBytes()
-            val pieces = ArrayList<String>(32000)
+            val reader = ProtoReader(data)
+            val pieces = ArrayList<Piece>(32_000)
             var bos: Int? = null
             var eos: Int? = null
             var unk: Int? = null
 
-            // Walk all length-delimited submessages and collect any message that looks like SentencePiece
-            fun parseMessage(buf: ProtoReader) {
-                while (buf.hasRemaining()) {
-                    val tag = buf.readTag() ?: break
-                    when (tag.wireType) {
-                        WireType.VARINT -> buf.skipVarint()
-                        WireType.I64 -> buf.skip64()
-                        WireType.LEN_DELIM -> {
-                            val slice = buf.readBytes()
-                            // Heuristic: try to parse a SentencePiece submessage
-                            val maybe = ProtoReader(slice)
-                            var piece: String? = null
-                            var typeId: Int? = null // 0=normal,1=unk,2=control,3=user_defined,4=bos,5=eos
-                            while (maybe.hasRemaining()) {
-                                val inner = maybe.readTag() ?: break
-                                when (inner.fieldNumber) {
-                                    1 -> if (inner.wireType == WireType.LEN_DELIM) piece = maybe.readString()
-                                    2 -> if (inner.wireType == WireType.I32) maybe.skip32() else maybe.skipUnknown(inner)
-                                    3 -> if (inner.wireType == WireType.VARINT) typeId = maybe.readVarint().toInt() else maybe.skipUnknown(inner)
-                                    else -> maybe.skipUnknown(inner)
-                                }
+            while (reader.hasRemaining()) {
+                val tag = reader.readTag() ?: break
+                when (tag.fieldNumber) {
+                    1 -> { // repeated SentencePiece
+                        val slice = reader.readBytes()
+                        val piece = parsePiece(ProtoReader(slice))
+                        val id = pieces.size
+                        pieces += piece
+                        when (piece.type) {
+                            Piece.Type.UNKNOWN -> if (unk == null) unk = id
+                            Piece.Type.CONTROL -> {
+                                if (piece.text == "<s>" && bos == null) bos = id
+                                if (piece.text == "</s>" && eos == null) eos = id
                             }
-                            if (piece != null) {
-                                val id = pieces.size
-                                pieces += piece
-                                when (typeId) {
-                                    1 -> if (unk == null) unk = id
-                                    4 -> if (bos == null) bos = id
-                                    5 -> if (eos == null) eos = id
-                                }
-                            } else {
-                                // Not a piece; still recurse into nested structures to find pieces
-                                parseMessage(ProtoReader(slice))
+                            else -> {}
+                        }
+                    }
+                    2 -> { // TrainerSpec
+                        val slice = reader.readBytes()
+                        val spec = ProtoReader(slice)
+                        while (spec.hasRemaining()) {
+                            val inner = spec.readTag() ?: break
+                            when (inner.fieldNumber) {
+                                40 -> unk = spec.readVarint().toInt()
+                                41 -> bos = spec.readVarint().toInt()
+                                42 -> eos = spec.readVarint().toInt()
+                                else -> spec.skipUnknown(inner)
                             }
                         }
-                        WireType.I32 -> buf.skip32()
                     }
+                    else -> reader.skipUnknown(tag)
                 }
             }
-
-            parseMessage(ProtoReader(data))
 
             if (pieces.isEmpty()) {
                 throw IllegalStateException("No pieces found in tokenizer.model; unsupported format?")
             }
 
-            // Fallback inference for special ids if types were not annotated
-            if (unk == null) unk = pieces.indexOf("<unk>").takeIf { it >= 0 } ?: 0
-            if (bos == null) bos = pieces.indexOf("<s>").takeIf { it >= 0 }
-            if (eos == null) eos = pieces.indexOf("</s>").takeIf { it >= 0 }
+            if (unk == null) {
+                val idx = pieces.indexOfFirst { it.text == "<unk>" }
+                unk = if (idx >= 0) idx else 0
+            }
+            if (bos == null) bos = pieces.indexOfFirst { it.text == "<s>" }.takeIf { it >= 0 }
+            if (eos == null) eos = pieces.indexOfFirst { it.text == "</s>" }.takeIf { it >= 0 }
 
             return SPMModel(pieces, bos, eos, unk)
+        }
+
+        private fun parsePiece(reader: ProtoReader): Piece {
+            var text: String? = null
+            var score = 0f
+            var type = Piece.Type.NORMAL
+            while (reader.hasRemaining()) {
+                val tag = reader.readTag() ?: break
+                when (tag.fieldNumber) {
+                    1 -> text = reader.readString()
+                    2 -> score = reader.readFloat()
+                    3 -> {
+                        val id = reader.readVarint().toInt()
+                        type = when (id) {
+                            2 -> Piece.Type.UNKNOWN
+                            3 -> Piece.Type.CONTROL
+                            4 -> Piece.Type.USER_DEFINED
+                            5 -> Piece.Type.UNUSED
+                            6 -> Piece.Type.BYTE
+                            else -> Piece.Type.NORMAL
+                        }
+                    }
+                    else -> reader.skipUnknown(tag)
+                }
+            }
+            if (text == null) throw IllegalStateException("SentencePiece missing piece text")
+            return Piece(text, score, type)
         }
     }
 }
@@ -141,6 +167,7 @@ private class ProtoReader(bytes: ByteArray) {
     }
 
     fun readString(): String = String(readBytes(), Charsets.UTF_8)
+    fun readFloat(): Float = Float.fromBits(buf.int)
 
     fun skipUnknown(tag: Tag) {
         when (tag.wireType) {

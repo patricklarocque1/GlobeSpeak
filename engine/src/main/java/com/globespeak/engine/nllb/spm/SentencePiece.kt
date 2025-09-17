@@ -12,37 +12,69 @@ import java.io.File
  * Internals use a minimal vendored SPM reader and greedy longest-match segmentation.
  */
 open class SentencePiece(
-    private val vocab: List<String>,
+    private val pieces: List<SPMModel.Piece>,
     private val bosId: Int,
     private val eosId: Int,
     private val unkId: Int
 ) {
-    private val _tokenToId: Map<String, Int> = vocab.withIndex().associate { it.value to it.index }
-    private val idToToken: Map<Int, String> = _tokenToId.entries.associate { it.value to it.key }
-    private val trie = PrefixTrie.from(vocab)
+    private val _tokenToId: Map<String, Int> = pieces.withIndex().associate { it.value.text to it.index }
+    private val idToPiece: Array<SPMModel.Piece?> = Array(pieces.size) { pieces[it] }
+    private val trie = PrefixTrie.from(pieces)
+    private val unkSafeId: Int = if (unkId >= 0 && unkId < pieces.size) unkId else 0
 
     fun encode(text: String): IntArray {
         val norm = TextNormalizer.normalize(text)
-        val ids = ArrayList<Int>(norm.length + 4)
-        if (bosId >= 0) ids += bosId
-        val words = if (norm.isEmpty()) emptyList() else norm.split(' ')
-        for (word in words) {
-            var token = if (word.isEmpty()) "▁" else "▁$word"
-            var pos = 0
-            while (pos < token.length) {
-                val (len, id) = trie.longestMatch(token, pos)
-                if (id != null && len > 0) {
-                    ids += id
-                    pos += len
-                } else {
-                    // Fallback: emit UNK and advance 1 char to avoid infinite loop
-                    ids += unkId
-                    pos += 1
+        val prepared = prepareInput(norm)
+        val out = ArrayList<Int>(prepared.length + 4)
+        if (bosId >= 0) out += bosId
+        if (prepared.isNotEmpty()) {
+            val scores = DoubleArray(prepared.length + 1) { Double.NEGATIVE_INFINITY }
+            val backPtr = IntArray(prepared.length + 1) { -1 }
+            val backPiece = IntArray(prepared.length + 1) { -1 }
+            scores[0] = 0.0
+            for (i in 0 until prepared.length) {
+                if (scores[i] == Double.NEGATIVE_INFINITY) continue
+                var matched = false
+                trie.collect(prepared, i) { len, id ->
+                    matched = true
+                    val pieceScore = scores[i] + pieces[id].score
+                    val nextIdx = i + len
+                    if (pieceScore > scores[nextIdx]) {
+                        scores[nextIdx] = pieceScore
+                        backPtr[nextIdx] = i
+                        backPiece[nextIdx] = id
+                    }
+                }
+                if (!matched) {
+                    val next = i + 1
+                    val pieceScore = scores[i] + pieces[unkSafeId].score
+                    if (pieceScore > scores[next]) {
+                        scores[next] = pieceScore
+                        backPtr[next] = i
+                        backPiece[next] = unkSafeId
+                    }
                 }
             }
+
+            var idx = prepared.length
+            if (scores[idx] == Double.NEGATIVE_INFINITY) {
+                // total fallback: treat as all UNK tokens
+                repeat(prepared.length) { out += unkSafeId }
+            } else {
+                val collected = ArrayList<Int>()
+                while (idx > 0) {
+                    val pieceId = backPiece[idx]
+                    val prev = backPtr[idx]
+                    if (pieceId < 0 || prev < 0) break
+                    collected += pieceId
+                    idx = prev
+                }
+                collected.reverse()
+                out.addAll(collected)
+            }
         }
-        if (eosId >= 0) ids += eosId
-        return ids.toIntArray()
+        if (eosId >= 0) out += eosId
+        return out.toIntArray()
     }
 
     fun decode(ids: IntArray): String {
@@ -50,8 +82,10 @@ open class SentencePiece(
         val sb = StringBuilder()
         for (id in ids) {
             if (id == eosId || id == bosId) continue
-            val piece = idToToken[id] ?: continue
+            val piece = idToPiece.getOrNull(id)?.text ?: continue
             if (piece == "<unk>") continue
+            val type = idToPiece[id]?.type
+            if (type == SPMModel.Piece.Type.CONTROL || type == SPMModel.Piece.Type.UNUSED) continue
             if (piece.startsWith('▁')) {
                 if (sb.isNotEmpty()) sb.append(' ')
                 sb.append(piece.substring(1))
@@ -74,7 +108,6 @@ open class SentencePiece(
     companion object {
         fun load(context: Context, file: File = ModelLocator(context).tokenizerFile()): SentencePiece {
             val model = SPMModel.load(file)
-            // Infer special IDs by piece text if types not available
             val bosId = model.bosId ?: (model.indexOf("<s>") ?: -1)
             val eosId = model.eosId ?: (model.indexOf("</s>") ?: -1)
             val unkId = model.unkId ?: (model.indexOf("<unk>") ?: 0)
@@ -90,26 +123,25 @@ private class PrefixTrie private constructor(private val root: Node) {
         var id: Int? = null
     )
 
-    fun longestMatch(s: String, start: Int): Pair<Int, Int?> {
+    fun collect(s: String, start: Int, fn: (len: Int, id: Int) -> Unit) {
         var node = root
-        var bestLen = -1
-        var bestId: Int? = null
         var i = start
         while (i < s.length) {
             val next = node.children[s[i]] ?: break
             node = next
-            if (node.id != null) { bestLen = i - start + 1; bestId = node.id }
+            if (node.id != null) {
+                fn(i - start + 1, node.id!!)
+            }
             i++
         }
-        return if (bestLen > 0) bestLen to bestId else 0 to null
     }
 
     companion object {
-        fun from(vocab: List<String>): PrefixTrie {
+        fun from(pieces: List<SPMModel.Piece>): PrefixTrie {
             val root = Node()
-            vocab.withIndex().forEach { (id, piece) ->
+            pieces.withIndex().forEach { (id, piece) ->
                 var node = root
-                for (ch in piece) {
+                for (ch in piece.text) {
                     node = node.children.getOrPut(ch) { Node() }
                 }
                 if (node.id == null) node.id = id
@@ -117,4 +149,14 @@ private class PrefixTrie private constructor(private val root: Node) {
             return PrefixTrie(root)
         }
     }
+}
+
+private fun prepareInput(norm: String): String {
+    if (norm.isEmpty()) return ""
+    val sb = StringBuilder(norm.length + 4)
+    sb.append('▁')
+    for (ch in norm) {
+        if (ch == ' ') sb.append('▁') else sb.append(ch)
+    }
+    return sb.toString()
 }

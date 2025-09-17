@@ -13,6 +13,7 @@ GlobeSpeak is a **hybrid Wear OS translator**. The watch acts as a *thin client*
 - **Advanced (NLLB-ONNX)** is available on capable 64-bit devices (heap ≥256 MB) with UI/log fallbacks when models/capability are missing.
 - SentencePiece parsing, greedy ONNX decoding, and backend selection now have unit coverage (tokenizer round-trip, capability matrix, protocol framing, VAD).
 - Bench/About tooling ship for backend timing and license visibility.
+- Whisper streaming STT runs on the phone using sideloaded ONNX weights, providing partial/final transcripts to the watch.
 
 ---
 
@@ -95,6 +96,19 @@ filesDir/models/nllb/
 ```
 Use `ModelLocator`  to resolve paths; do not hardcode external storage.
 Download the ONNX + SentencePiece files with the Hugging Face CLI (see README “Advanced Setup” step 0) or use the in-app importer.
+
+## File locations (Whisper STT)
+```
+filesDir/models/whisper/
+  Whisper_initializer.onnx
+  Whisper_encoder.onnx
+  Whisper_decoder.onnx
+  Whisper_cache_initializer.onnx
+  Whisper_cache_initializer_batch.onnx
+  Whisper_detokenizer.onnx
+```
+Use `WhisperModelLocator` to resolve paths. Import via device file explorer or ADB.
+Languages screen also offers an "Import Whisper file" action through the Storage Access Framework.
 
 ## Engine facade (what agents should call)
 ```kotlin

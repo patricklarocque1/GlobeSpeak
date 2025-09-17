@@ -58,14 +58,37 @@ adb push tokenizer.model /sdcard/Android/data/com.globespeak.mobile/files/models
 After both files are present, the app performs a lightweight session init and shows **Model OK** on the Languages screen. If loading fails, you’ll see a clear error and the app will continue using **Standard** (ML Kit).
 
 ### 6) Benchmark (optional)
-Open **Bench** (dev‑only nav) to compare Standard vs Advanced:
+Open **Bench** (dev-only nav) to compare Standard vs Advanced:
 - Enter text, select target language, run both paths.  
 - Shows which backend ran and elapsed time.
 
 ---
 
+## Whisper (Streaming STT) Setup
+
+Whisper runs on the phone and powers streaming speech-to-text. The pipeline expects the ONNX export from RTranslator/Whisper:
+
+```
+/Android/data/<package>/files/models/whisper/
+  ├─ Whisper_initializer.onnx
+  ├─ Whisper_encoder.onnx
+  ├─ Whisper_decoder.onnx
+  ├─ Whisper_cache_initializer.onnx
+  ├─ Whisper_cache_initializer_batch.onnx
+  └─ Whisper_detokenizer.onnx
+```
+
+1. **Download** the bundle (e.g. from [RTranslator releases](https://github.com/niedev/RTranslator/releases)) or via the Hugging Face CLI.
+   ```bash
+   huggingface-cli download niedev/whisper-small-android --include "Whisper_*.onnx" --local-dir ./whisper-download
+   ```
+2. **Copy** the files into `filesDir/models/whisper/` using ADB, the device file explorer, or the in-app importer (**Settings → Languages → Whisper → Import Whisper file**).
+3. **Verify** on the Languages screen (Whisper status shows “Found” once all files are present). The translation service will switch to Whisper automatically.
+
+---
+
 ## Standard (ML Kit) Notes
-- First translation requires a one‑time **on‑device** model download for the chosen target language (Wi‑Fi‑only toggle available).  
+- First translation requires a one-time **on-device** model download for the chosen target language (Wi-Fi-only toggle available).  
 - After download, translation is fully offline.  
 - Language detection (Lang ID) is used to choose the source automatically.
 

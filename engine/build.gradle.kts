@@ -39,6 +39,7 @@ dependencies {
   implementation("com.google.mlkit:language-id:17.0.0")
   implementation("androidx.datastore:datastore-preferences:1.1.1")
   implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.0")
+  implementation("com.microsoft.onnxruntime:onnxruntime-extensions-android:0.13.0")
 
   testImplementation("junit:junit:4.13.2")
 }

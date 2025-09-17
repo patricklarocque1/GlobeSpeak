@@ -112,6 +112,7 @@ class AudioCaptureService : Service() {
         val buffer = ByteArray(bufferSize)
 
         val vad = VadGate(sampleRate = sampleRate)
+        var lastVad = vad.isActive()
         var seq = 1
         val chunkBytesTarget = 10_240 // ~320ms at 16kHz * 2 bytes
         val chunkBuf = ByteArray(chunkBytesTarget)
@@ -140,6 +141,10 @@ class AudioCaptureService : Service() {
                         asShorts[i] = ((hi shl 8) or lo).toShort()
                     }
                     val speaking = vad.feed(asShorts)
+                    if (speaking != lastVad) {
+                        Log.i(TAG, "VAD ${if (speaking) "open" else "closed"} at seq=$seq")
+                        lastVad = speaking
+                    }
                     if (speaking) {
                         var off = 0
                         while (off < read) {
@@ -160,6 +165,7 @@ class AudioCaptureService : Service() {
                             System.arraycopy(chunkBuf, 0, payload, 0, chunkFill)
                             val framed = AudioFramer.frame(seq++, System.currentTimeMillis(), payload)
                             output.write(framed)
+                            Log.d(TAG, "Flushed trailing chunk bytes=$chunkFill seq=$seq")
                             chunkFill = 0
                         }
                     }

@@ -63,8 +63,26 @@ Open **Bench** (from Logs/dev menu) to compare Standard vs Advanced:
 
 ---
 
+## Whisper (Streaming STT) Setup
+
+```
+/Android/data/<package>/files/models/whisper/
+  Whisper_initializer.onnx
+  Whisper_encoder.onnx
+  Whisper_decoder.onnx
+  Whisper_cache_initializer.onnx
+  Whisper_cache_initializer_batch.onnx
+  Whisper_detokenizer.onnx
+```
+
+1. Download the Whisper ONNX bundle (e.g. from RTranslator releases or the Hugging Face CLI).
+2. Push the files into `filesDir/models/whisper/` using ADB, Android Studio’s device explorer, or the in-app importer (**Settings → Languages → Whisper → Import Whisper file**).
+3. The Languages screen shows “Whisper model: Found” once everything is in place.
+
+---
+
 ## Standard (ML Kit) Notes
-- First translation requires a one‑time **on‑device** model download for the chosen target language (Wi‑Fi‑only toggle available).  
+- First translation requires a one-time **on-device** model download for the chosen target language (Wi-Fi-only toggle available).  
 - After download, translation is fully offline.  
 - Language detection (Lang ID) is used to choose the source automatically.
 

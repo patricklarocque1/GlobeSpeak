@@ -5,17 +5,18 @@ import org.junit.Test
 
 class BenchFormattingTest {
     @Test fun formats_success_row() {
-        val row = formatResultRow("Standard", 123, "hola", null)
+        val res = BenchResult("Standard", listOf(100, 120, 110), "hola", null)
+        val row = formatResultRow(res)
         assertTrue(row.contains("Standard"))
-        assertTrue(row.contains("123ms"))
+        assertTrue(row.contains("avg=110"))
         assertTrue(row.contains("hola"))
     }
 
     @Test fun formats_error_row() {
-        val row = formatResultRow("Advanced", -1, null, "OOM")
+        val res = BenchResult("Advanced", emptyList(), null, "OOM")
+        val row = formatResultRow(res)
         assertTrue(row.contains("Advanced"))
         assertTrue(row.contains("error"))
         assertTrue(row.contains("OOM"))
     }
 }
-
