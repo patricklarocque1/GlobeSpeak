@@ -30,6 +30,6 @@
         <service
             android:name=".service.AudioCaptureService"
             android:exported="false"
-            android:foregroundServiceType="microphone|dataSync" />
+            android:foregroundServiceType="microphone" />
     </application>
 </manifest>
