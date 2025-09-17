@@ -8,7 +8,7 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.globespeak.engine.TranslatorEngine
-import com.globespeak.engine.mlkit.MLKitTranslationBackend
+import com.globespeak.engine.backend.BackendFactory
 import com.google.android.gms.wearable.ChannelClient
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
@@ -22,11 +22,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import com.globespeak.mobile.logging.LogBus
 import com.globespeak.mobile.logging.LogLine
 import com.globespeak.mobile.data.Settings
+import com.globespeak.mobile.data.appDataStore
 import kotlinx.coroutines.flow.first
 
 class TranslationService : WearableListenerService() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
-    private val engine by lazy { TranslatorEngine(MLKitTranslationBackend()) }
+    private val engine by lazy { TranslatorEngine(BackendFactory.build(this, this.appDataStore)) }
     private val settings by lazy { Settings(this) }
 
     override fun onCreate() {

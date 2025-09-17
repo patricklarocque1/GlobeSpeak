@@ -43,6 +43,19 @@ fun LanguagesScreen(vm: LanguagesViewModel = viewModel()) {
         }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Engine")
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = { vm.setEngineMode("standard") }, enabled = ui.engineMode != "standard") { Text("Standard (ML Kit)") }
+                    Button(onClick = { vm.setEngineMode("advanced") }, enabled = ui.engineMode != "advanced") { Text("Advanced (NLLB-ONNX)") }
+                }
+                Text("Device capability: ${if (ui.deviceCapable) "OK" else "Not supported"}")
+                Text("NLLB model: ${if (ui.nllbModelPresent) "Found" else "Missing"}")
+                val active = if (ui.engineMode == "advanced" && ui.deviceCapable && ui.nllbModelPresent) "Advanced" else "Standard (fallback)"
+                Text("Active: $active")
+            }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Model status: ${modelLabel(ui.modelState)}")
                 if (ui.modelState is ModelState.Downloading) {
                     CircularProgressIndicator()
@@ -56,6 +69,7 @@ fun LanguagesScreen(vm: LanguagesViewModel = viewModel()) {
         }
     }
 }
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,6 +94,7 @@ private fun TargetLanguagePicker(languages: List<String>, current: String, onCha
         }
     }
 }
+
 
 private fun languageName(code: String): String =
     Locale(code).displayName.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() } +

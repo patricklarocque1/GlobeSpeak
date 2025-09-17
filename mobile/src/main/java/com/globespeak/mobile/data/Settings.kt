@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import com.globespeak.shared.Bridge
 
-private val Context.dataStore by preferencesDataStore(name = "settings")
+val Context.appDataStore by preferencesDataStore(name = "settings")
 
 object SettingsKeys {
     val TARGET_LANG = stringPreferencesKey(Bridge.DS_TARGET_LANG)
@@ -17,7 +17,7 @@ object SettingsKeys {
 }
 
 class Settings(private val context: Context) {
-    val targetLanguage: Flow<String> = context.dataStore.data
+    val targetLanguage: Flow<String> = context.appDataStore.data
         .map { prefs ->
             prefs[SettingsKeys.TARGET_LANG]
                 ?: prefs[SettingsKeys.LEGACY_TARGET_LANG]
@@ -25,6 +25,6 @@ class Settings(private val context: Context) {
         }
 
     suspend fun setTargetLanguage(code: String) {
-        context.dataStore.edit { it[SettingsKeys.TARGET_LANG] = code }
+        context.appDataStore.edit { it[SettingsKeys.TARGET_LANG] = code }
     }
 }

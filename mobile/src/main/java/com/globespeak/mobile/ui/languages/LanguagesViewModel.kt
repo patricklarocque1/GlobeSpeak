@@ -9,7 +9,10 @@ import com.globespeak.mobile.data.Settings
 import com.globespeak.mobile.logging.LogBus
 import com.globespeak.mobile.logging.LogLine
 import com.globespeak.shared.Bridge
+import androidx.datastore.preferences.core.edit
+import com.globespeak.mobile.data.appDataStore
 import kotlinx.coroutines.flow.MutableStateFlow
+import com.globespeak.mobile.data.appDataStore
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -28,7 +31,10 @@ data class LanguagesUi(
     val supported: List<String> = emptyList(),
     val selectedTarget: String = Bridge.DEFAULT_TARGET_LANG,
     val wifiOnly: Boolean = true,
-    val modelState: ModelState = ModelState.Checking
+    val modelState: ModelState = ModelState.Checking,
+    val engineMode: String = "standard", // "standard" | "advanced"
+    val deviceCapable: Boolean = false,
+    val nllbModelPresent: Boolean = false
 )
 
 class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
@@ -49,6 +55,19 @@ class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
                 checkModel(lang)
             }
         }
+        // Capability & model presence (best-effort from engine backend helpers in app layer)
+        viewModelScope.launch {
+            val cap = com.globespeak.engine.backend.DeviceCapability(ctx).supportsAdvanced()
+            val present = com.globespeak.engine.backend.ModelLocator(ctx).hasNllbModel()
+            _ui.update { it.copy(deviceCapable = cap, nllbModelPresent = present) }
+        }
+        // Read engine mode
+        viewModelScope.launch {
+            val key = androidx.datastore.preferences.core.stringPreferencesKey(com.globespeak.shared.Bridge.DS_TRANSLATION_ENGINE)
+            ctx.appDataStore.data.collectLatest { prefs ->
+                _ui.update { it.copy(engineMode = prefs[key] ?: "standard") }
+            }
+        }
     }
 
     fun toggleWifiOnly(v: Boolean) { _ui.update { it.copy(wifiOnly = v) } }
@@ -56,6 +75,11 @@ class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
     fun setTarget(lang: String) = viewModelScope.launch {
         settings.setTargetLanguage(lang)
         // collector will re-check model when value changes
+    }
+
+    fun setEngineMode(mode: String) = viewModelScope.launch {
+        val key = androidx.datastore.preferences.core.stringPreferencesKey(com.globespeak.shared.Bridge.DS_TRANSLATION_ENGINE)
+        ctx.appDataStore.edit { it[key] = mode }
     }
 
     fun checkModel(lang: String = _ui.value.selectedTarget) = viewModelScope.launch {
