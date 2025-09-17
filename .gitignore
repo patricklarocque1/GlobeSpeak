@@ -33,6 +33,7 @@ Thumbs.db
 # Env
 .env
 .env.*
+.venv/
 
 # Kotlin/Java
 *.class

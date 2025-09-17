@@ -12,6 +12,15 @@
 
 ## Advanced (NLLB‑ONNX) Setup
 
+### 0) Download the model + tokenizer
+Download an NLLB ONNX export (e.g. [`facebook/nllb-200-distilled-600M`](https://huggingface.co/facebook/nllb-200-distilled-600M)).
+
+Using Hugging Face CLI:
+```bash
+huggingface-cli download facebook/nllb-200-distilled-600M --include "*nllb.onnx" "*tokenizer.model" --local-dir ./nllb-download
+```
+This brings the ONNX graph and SentencePiece tokenizer into `./nllb-download/`.
+
 ### 1) Device capability
 Advanced is intended for **arm64** or **x86_64** devices with ample RAM. The app checks capability (RAM/ABI) before activating; otherwise it falls back to Standard.
 

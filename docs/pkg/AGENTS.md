@@ -8,6 +8,12 @@ GlobeSpeak is a **hybrid Wear OS translator**. The watch acts as a *thin client*
 - `wear/` — Wear OS app. Captures audio, shows conversation UI, sends PCM to the phone, receives translations.
 - `engine/` — Android **library** exposing a simple facade (`TranslatorEngine`) that wraps Whisper + translation.
 
+## Current backend status
+- **Standard (ML Kit)** is the default backend; it auto-manages offline translation models.
+- **Advanced (NLLB-ONNX)** is available on capable 64-bit devices (heap ≥256 MB) with UI/log fallbacks when models/capability are missing.
+- SentencePiece parsing, greedy ONNX decoding, and backend selection now have unit coverage (tokenizer round-trip, capability matrix, protocol framing, VAD).
+- Bench/About tooling ship for backend timing and license visibility.
+
 ---
 
 ## Mission for coding agents
@@ -88,6 +94,7 @@ filesDir/models/nllb/
   tokenizer.model
 ```
 Use `ModelLocator`  to resolve paths; do not hardcode external storage.
+Download the ONNX + SentencePiece files with the Hugging Face CLI (see README “Advanced Setup” step 0) or use the in-app importer.
 
 ## Engine facade (what agents should call)
 ```kotlin
@@ -143,4 +150,3 @@ Tasks to avoid unless asked:
 ./gradlew test
 ./gradlew lint
 ```
-
