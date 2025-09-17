@@ -1,0 +1,141 @@
+package com.globespeak.ui
+
+import android.Manifest
+import android.content.Intent
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material.Button
+import androidx.wear.compose.material.Chip
+import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.PositionIndicator
+import androidx.wear.compose.material.Scaffold
+import androidx.wear.compose.material.ScalingLazyColumn
+import androidx.wear.compose.material.ScalingLazyListState
+import androidx.wear.compose.material.Text
+import androidx.wear.compose.material.rememberScalingLazyListState
+import com.google.android.gms.wearable.MessageClient
+import com.google.android.gms.wearable.Wearable
+import com.globespeak.service.AudioCaptureService
+
+class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListener {
+    private val messageClient by lazy { Wearable.getMessageClient(this) }
+    private lateinit var vm: WatchViewModel
+
+    private val requestMicPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) startCapture() else vm.setCapturing(false)
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            vm = viewModel()
+            val listState = rememberScalingLazyListState()
+
+            MaterialTheme {
+                WatchScaffold(vm, listState,
+                    onStart = { ensurePermissionAndStart() },
+                    onStop = { stopCapture() },
+                    onClear = { vm.clear() }
+                )
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        messageClient.addListener(this)
+        vm.refreshNodes()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        messageClient.removeListener(this)
+    }
+
+    private fun ensurePermissionAndStart() {
+        requestMicPermission.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    private fun startCapture() {
+        val i = Intent(this, AudioCaptureService::class.java).apply { action = AudioCaptureService.ACTION_START }
+        startForegroundService(i)
+        vm.setCapturing(true)
+    }
+
+    private fun stopCapture() {
+        val i = Intent(this, AudioCaptureService::class.java).apply { action = AudioCaptureService.ACTION_STOP }
+        startService(i)
+        vm.setCapturing(false)
+    }
+
+    override fun onMessageReceived(event: com.google.android.gms.wearable.MessageEvent) {
+        if (event.path == "/translation") {
+            val text = String(event.data)
+            vm.addTranslation(text)
+        }
+    }
+}
+
+@Composable
+private fun WatchScaffold(
+    vm: WatchViewModel,
+    listState: ScalingLazyListState,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onClear: () -> Unit
+) {
+    val status by vm.status.collectAsState()
+    val capturing by vm.capturing.collectAsState()
+    val items by vm.messages.collectAsState()
+
+    Scaffold(
+        timeText = {},
+        positionIndicator = { PositionIndicator(scalingLazyListState = listState) }
+    ) {
+        ScalingLazyColumn(
+            modifier = Modifier.fillMaxSize().padding(8.dp),
+            state = listState,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            contentPadding = PaddingValues(bottom = 8.dp)
+        ) {
+            item { Text(statusLabel(status)) }
+            item {
+                val isCapturing = capturing
+                Button(onClick = { if (isCapturing) onStop() else onStart() }) {
+                    Text(if (isCapturing) "Stop" else "Start")
+                }
+            }
+            items(items.size) { idx ->
+                val m = items[idx]
+                Chip(onClick = {}, label = { Text("${m.from}: ${m.text}") })
+            }
+            item { Chip(onClick = onClear, label = { Text("Clear") }) }
+        }
+    }
+}
+
+private fun statusLabel(s: WatchStatus) = when (s) {
+    WatchStatus.Disconnected -> "Disconnected"
+    WatchStatus.Ready -> "Ready"
+    WatchStatus.Listening -> "Listening"
+    WatchStatus.Translating -> "Translating"
+}

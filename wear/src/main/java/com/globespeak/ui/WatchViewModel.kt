@@ -1,0 +1,57 @@
+package com.globespeak.ui
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.google.android.gms.wearable.Node
+import com.google.android.gms.wearable.Wearable
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+
+enum class WatchStatus { Disconnected, Ready, Listening, Translating }
+
+data class MessageItem(val from: String, val text: String)
+
+class WatchViewModel(app: Application) : AndroidViewModel(app) {
+    private val ctx = getApplication<Application>()
+
+    private val _status = MutableStateFlow(WatchStatus.Disconnected)
+    val status: StateFlow<WatchStatus> = _status.asStateFlow()
+
+    private val _capturing = MutableStateFlow(false)
+    val capturing: StateFlow<Boolean> = _capturing.asStateFlow()
+
+    private val _messages = MutableStateFlow<List<MessageItem>>(emptyList())
+    val messages: StateFlow<List<MessageItem>> = _messages.asStateFlow()
+
+    init {
+        refreshNodes()
+    }
+
+    fun refreshNodes() {
+        viewModelScope.launch {
+            val nodes = Wearable.getNodeClient(ctx).connectedNodes.await()
+            _status.value = if (nodes.isEmpty()) WatchStatus.Disconnected else if (_capturing.value) WatchStatus.Listening else WatchStatus.Ready
+        }
+    }
+
+    fun setCapturing(running: Boolean) {
+        _capturing.value = running
+        refreshNodes()
+    }
+
+    fun addTranslation(text: String) {
+        val updated = _messages.value.toMutableList()
+        // Add placeholder user transcript then translation
+        updated.add(MessageItem(from = "You", text = "…"))
+        updated.add(MessageItem(from = "GlobeSpeak", text = text))
+        _messages.value = updated.takeLast(100)
+        _status.value = if (_capturing.value) WatchStatus.Listening else WatchStatus.Ready
+    }
+
+    fun clear() { _messages.value = emptyList() }
+}
+

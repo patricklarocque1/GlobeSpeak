@@ -1,0 +1,2 @@
+# Library proguard rules placeholder
+

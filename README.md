@@ -25,5 +25,17 @@
 ./gradlew :mobile:installDebug :wear:installDebug
 ```
 
+## Manual End‑to‑End Test
+- Watch: launch `GlobeSpeak` and grant microphone permission.
+- Phone: no UI is required; the `TranslationService` wakes when the watch opens a channel.
+- On the watch, tap Start to begin capture. Speak for a few seconds, then tap Stop.
+- The phone receives PCM via a Data Layer Channel (`/audio`), runs the stub engine, and sends text back via `MessageClient` (`/translation`).
+- The watch UI displays the latest translated text.
+
+Notes
+- Audio: PCM 16‑bit, 16 kHz, mono, little‑endian.
+- Offline only: no cloud calls. Engine is a stub; swap in Whisper + ML Kit later.
+- Both watch and phone use foreground services while active (visible notifications).
+
 ## License
 See [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
