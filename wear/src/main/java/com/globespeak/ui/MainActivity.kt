@@ -8,58 +8,54 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.wear.compose.material.MaterialTheme
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Button
+import androidx.wear.compose.material.Chip
+import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.PositionIndicator
+import androidx.wear.compose.material.Scaffold
+import androidx.wear.compose.material.ScalingLazyColumn
+import androidx.wear.compose.material.ScalingLazyListState
 import androidx.wear.compose.material.Text
+import androidx.wear.compose.material.rememberScalingLazyListState
 import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.Wearable
 import com.globespeak.service.AudioCaptureService
-import com.globespeak.service.AudioCaptureService.Companion.AUDIO_PATH
 
 class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListener {
-    private var lastTranslation: String = ""
     private val messageClient by lazy { Wearable.getMessageClient(this) }
+    private lateinit var vm: WatchViewModel
 
     private val requestMicPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) startCapture()
+        if (granted) startCapture() else vm.setCapturing(false)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            var capturing by remember { mutableStateOf(false) }
-            var translation by remember { mutableStateOf("") }
-
-            // Keep a reference to update from callback
-            uiSetCapturing = { capturing = it }
-            uiSetTranslation = { translation = it }
+            vm = viewModel()
+            val listState = rememberScalingLazyListState()
 
             MaterialTheme {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(if (capturing) "Capturing…" else "Idle")
-                    Button(onClick = {
-                        if (capturing) stopCapture() else ensurePermissionAndStart()
-                        capturing = !capturing
-                    }) {
-                        Text(if (capturing) "Stop" else "Start")
-                    }
-                    if (translation.isNotEmpty()) {
-                        Text(translation)
-                    }
-                }
+                WatchScaffold(vm, listState,
+                    onStart = { ensurePermissionAndStart() },
+                    onStop = { stopCapture() },
+                    onClear = { vm.clear() }
+                )
             }
         }
     }
@@ -67,6 +63,7 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
     override fun onResume() {
         super.onResume()
         messageClient.addListener(this)
+        vm.refreshNodes()
     }
 
     override fun onPause() {
@@ -81,23 +78,64 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
     private fun startCapture() {
         val i = Intent(this, AudioCaptureService::class.java).apply { action = AudioCaptureService.ACTION_START }
         startForegroundService(i)
-        uiSetCapturing?.invoke(true)
+        vm.setCapturing(true)
     }
 
     private fun stopCapture() {
         val i = Intent(this, AudioCaptureService::class.java).apply { action = AudioCaptureService.ACTION_STOP }
         startService(i)
-        uiSetCapturing?.invoke(false)
+        vm.setCapturing(false)
     }
 
     override fun onMessageReceived(event: com.google.android.gms.wearable.MessageEvent) {
         if (event.path == "/translation") {
             val text = String(event.data)
-            lastTranslation = text
-            uiSetTranslation?.invoke(text)
+            vm.addTranslation(text)
         }
     }
+}
 
-    private var uiSetCapturing: ((Boolean) -> Unit)? = null
-    private var uiSetTranslation: ((String) -> Unit)? = null
+@Composable
+private fun WatchScaffold(
+    vm: WatchViewModel,
+    listState: ScalingLazyListState,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onClear: () -> Unit
+) {
+    val status by vm.status.collectAsState()
+    val capturing by vm.capturing.collectAsState()
+    val items by vm.messages.collectAsState()
+
+    Scaffold(
+        timeText = {},
+        positionIndicator = { PositionIndicator(scalingLazyListState = listState) }
+    ) {
+        ScalingLazyColumn(
+            modifier = Modifier.fillMaxSize().padding(8.dp),
+            state = listState,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            contentPadding = PaddingValues(bottom = 8.dp)
+        ) {
+            item { Text(statusLabel(status)) }
+            item {
+                val isCapturing = capturing
+                Button(onClick = { if (isCapturing) onStop() else onStart() }) {
+                    Text(if (isCapturing) "Stop" else "Start")
+                }
+            }
+            items(items.size) { idx ->
+                val m = items[idx]
+                Chip(onClick = {}, label = { Text("${m.from}: ${m.text}") })
+            }
+            item { Chip(onClick = onClear, label = { Text("Clear") }) }
+        }
+    }
+}
+
+private fun statusLabel(s: WatchStatus) = when (s) {
+    WatchStatus.Disconnected -> "Disconnected"
+    WatchStatus.Ready -> "Ready"
+    WatchStatus.Listening -> "Listening"
+    WatchStatus.Translating -> "Translating"
 }
