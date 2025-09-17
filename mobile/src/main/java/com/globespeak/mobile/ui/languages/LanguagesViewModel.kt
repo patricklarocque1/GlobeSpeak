@@ -10,9 +10,11 @@ import com.globespeak.mobile.logging.LogBus
 import com.globespeak.mobile.logging.LogLine
 import com.globespeak.shared.Bridge
 import androidx.datastore.preferences.core.edit
+import com.globespeak.engine.backend.DeviceCapability
+import com.globespeak.engine.backend.ModelLocator
+import com.globespeak.engine.whisper.WhisperModelLocator
 import com.globespeak.mobile.data.appDataStore
 import kotlinx.coroutines.flow.MutableStateFlow
-import com.globespeak.mobile.data.appDataStore
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -35,6 +37,8 @@ data class LanguagesUi(
     val engineMode: String = "standard", // "standard" | "advanced"
     val deviceCapable: Boolean = false,
     val nllbModelPresent: Boolean = false,
+    val whisperModelPresent: Boolean = false,
+    val whisperMissing: List<String> = emptyList(),
     val activeEngine: String = "standard",
     val fallbackReason: String? = null
 )
@@ -58,11 +62,7 @@ class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         // Capability & model presence (best-effort from engine backend helpers in app layer)
-        viewModelScope.launch {
-            val cap = com.globespeak.engine.backend.DeviceCapability(ctx).supportsAdvanced()
-            val present = com.globespeak.engine.backend.ModelLocator(ctx).hasNllbModel()
-            _ui.update { it.copy(deviceCapable = cap, nllbModelPresent = present) }
-        }
+        refreshAdvancedStatus()
         // Read engine mode
         viewModelScope.launch {
             val key = androidx.datastore.preferences.core.stringPreferencesKey(com.globespeak.shared.Bridge.DS_TRANSLATION_ENGINE)
@@ -113,9 +113,46 @@ class LanguagesViewModel(app: Application) : AndroidViewModel(app) {
         refreshEngineSelectionInfo()
     }
 
-    private fun refreshEngineSelectionInfo() = viewModelScope.launch {
+    fun refreshAdvancedStatus() = viewModelScope.launch { refreshAdvancedStatusInternal() }
+
+    fun onModelFileImported(fileName: String) {
+        viewModelScope.launch {
+            LogBus.log("Languages", "Imported $fileName", LogLine.Kind.ENGINE)
+            refreshAdvancedStatusInternal()
+        }
+    }
+
+    private suspend fun refreshAdvancedStatusInternal() {
+        val cap = DeviceCapability(ctx).supportsAdvanced()
+        val nllbLocator = ModelLocator(ctx)
+        val whisperLocator = WhisperModelLocator(ctx)
+        val nllbPresent = nllbLocator.hasNllbModel()
+        val whisperPresent = whisperLocator.hasModel()
+        val whisperMissing = whisperLocator.requiredFiles().filterNot { it.exists() }.map { it.name }
+        _ui.update {
+            it.copy(
+                deviceCapable = cap,
+                nllbModelPresent = nllbPresent,
+                whisperModelPresent = whisperPresent,
+                whisperMissing = whisperMissing
+            )
+        }
+        LogBus.log(
+            "Languages",
+            "Advanced status capable=$cap nllb=$nllbPresent whisper=$whisperPresent missing=${whisperMissing.joinToString()}",
+            LogLine.Kind.ENGINE
+        )
+        refreshEngineSelectionInfo()
+    }
+
+    private suspend fun refreshEngineSelectionInfo() {
         val prefs = ctx.appDataStore
-        val (_, info) = com.globespeak.engine.backend.BackendFactory.buildWithInfo(ctx, prefs)
+        val (backend, info) = com.globespeak.engine.backend.BackendFactory.buildWithInfo(ctx, prefs)
         _ui.update { it.copy(activeEngine = info.active, fallbackReason = info.reason) }
+        LogBus.log(
+            "Engine",
+            "Selection selected=${info.selected} active=${info.active} reason=${info.reason ?: "none"}",
+            LogLine.Kind.ENGINE
+        )
     }
 }

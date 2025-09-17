@@ -34,13 +34,17 @@ import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.rememberScalingLazyListState
 import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.Wearable
+import com.globespeak.engine.proto.EngineStatus
 import com.globespeak.service.AudioCaptureService
 import com.globespeak.shared.Bridge
 import com.globespeak.ui.about.AboutActivity
 import org.json.JSONObject
 
-class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListener {
+class MainActivity : ComponentActivity(),
+    MessageClient.OnMessageReceivedListener,
+    com.google.android.gms.wearable.DataClient.OnDataChangedListener {
     private val messageClient by lazy { Wearable.getMessageClient(this) }
+    private val dataClient by lazy { Wearable.getDataClient(this) }
     private val vm: WatchViewModel by viewModels()
 
     private val requestMicPermission = registerForActivityResult(
@@ -67,6 +71,7 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
     override fun onResume() {
         super.onResume()
         messageClient.addListener(this)
+        dataClient.addListener(this)
         vm.refreshNodes()
         // Request settings if unknown
         if (vm.targetLang.value == "—") {
@@ -81,6 +86,7 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
     override fun onPause() {
         super.onPause()
         messageClient.removeListener(this)
+        dataClient.removeListener(this)
     }
 
     private fun ensurePermissionAndStart() {
@@ -118,6 +124,23 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
             }
         }
     }
+
+    override fun onDataChanged(events: com.google.android.gms.wearable.DataEventBuffer) {
+        events.use {
+            it.forEach { event ->
+                if (event.type != com.google.android.gms.wearable.DataEvent.TYPE_CHANGED) return@forEach
+                if (event.dataItem.uri.path != Bridge.PATH_ENGINE_STATE) return@forEach
+                val map = com.google.android.gms.wearable.DataMapItem.fromDataItem(event.dataItem).dataMap
+                val connected = map.getBoolean("connected", false)
+                val statusName = map.getString("status")
+                val status = runCatching { EngineStatus.valueOf(statusName ?: EngineStatus.Unknown.name) }
+                    .getOrDefault(EngineStatus.Unknown)
+                val reason = map.getString("statusReason")
+                vm.updateEngineConnection(connected)
+                vm.updateEngineStatus(status, reason)
+            }
+        }
+    }
 }
 
 @Composable
@@ -132,6 +155,7 @@ private fun WatchScaffold(
     val capturing by vm.capturing.collectAsState()
     val items by vm.messages.collectAsState()
     val targetLang by vm.targetLang.collectAsState()
+    val engineNote by vm.engineStatusMessage.collectAsState()
 
     Scaffold(
         timeText = {},
@@ -143,7 +167,8 @@ private fun WatchScaffold(
             verticalArrangement = Arrangement.spacedBy(6.dp),
             contentPadding = PaddingValues(bottom = 8.dp)
         ) {
-            item { Text(statusLabel(status)) }
+            val statusText = engineNote ?: statusLabel(status)
+            item { Text(statusText) }
             item { Text("Target: ${displayLang(targetLang)}") }
             item {
                 val isCapturing = capturing

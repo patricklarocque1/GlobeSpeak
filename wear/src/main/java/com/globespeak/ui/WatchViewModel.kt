@@ -3,9 +3,10 @@ package com.globespeak.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.android.gms.wearable.Node
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.ConnectionResult
+import com.globespeak.engine.proto.EngineStatus
+import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +34,9 @@ class WatchViewModel(app: Application) : AndroidViewModel(app) {
     private val _targetLang = MutableStateFlow("—")
     val targetLang: StateFlow<String> = _targetLang.asStateFlow()
 
+    private val _engineStatusMessage = MutableStateFlow<String?>(null)
+    val engineStatusMessage: StateFlow<String?> = _engineStatusMessage.asStateFlow()
+
     init {
         refreshNodes()
     }
@@ -57,6 +61,40 @@ class WatchViewModel(app: Application) : AndroidViewModel(app) {
     fun setCapturing(running: Boolean) {
         _capturing.value = running
         refreshNodes()
+    }
+
+    fun updateEngineConnection(connected: Boolean) {
+        if (!connected) {
+            _status.value = WatchStatus.Disconnected
+        } else if (_status.value == WatchStatus.Disconnected) {
+            _status.value = if (_capturing.value) WatchStatus.Listening else WatchStatus.Ready
+        }
+    }
+
+    fun updateEngineStatus(status: EngineStatus, reason: String?) {
+        _engineStatusMessage.value = when (status) {
+            EngineStatus.WhisperUnavailable -> buildString {
+                append("Whisper unavailable")
+                reason?.takeIf { it.isNotBlank() }?.let {
+                    append(" (")
+                    append(it)
+                    append(")")
+                }
+            }
+            EngineStatus.Error -> buildString {
+                append("Engine error")
+                reason?.takeIf { it.isNotBlank() }?.let {
+                    append(" (")
+                    append(it)
+                    append(")")
+                }
+            }
+            EngineStatus.Ready -> {
+                _status.value = if (_capturing.value) WatchStatus.Listening else WatchStatus.Ready
+                null
+            }
+            EngineStatus.Unknown -> null
+        }
     }
 
     fun addPartial(text: String) {

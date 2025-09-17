@@ -45,6 +45,7 @@ fun DashboardScreen(vm: DashboardViewModel = viewModel()) {
     val target by vm.target.collectAsState()
     val result by vm.result.collectAsState()
     val languages by vm.languages.collectAsState()
+    val statusText by vm.engineStatusText.collectAsState()
 
     val notifLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -55,7 +56,7 @@ fun DashboardScreen(vm: DashboardViewModel = viewModel()) {
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        ServiceStatusCard(running = running, onStart = {
+        ServiceStatusCard(running = running, statusText = statusText, onStart = {
             if (Build.VERSION.SDK_INT >= 33) {
                 notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             } else vm.startService()
@@ -76,7 +77,12 @@ fun DashboardScreen(vm: DashboardViewModel = viewModel()) {
 }
 
 @Composable
-private fun ServiceStatusCard(running: Boolean, onStart: () -> Unit, onStop: () -> Unit) {
+private fun ServiceStatusCard(
+    running: Boolean,
+    statusText: String,
+    onStart: () -> Unit,
+    onStop: () -> Unit
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text("Service", style = MaterialTheme.typography.titleMedium)
@@ -86,6 +92,10 @@ private fun ServiceStatusCard(running: Boolean, onStart: () -> Unit, onStop: () 
                 Button(onClick = if (running) onStop else onStart) {
                     Text(if (running) "Stop" else "Start")
                 }
+            }
+            if (statusText.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(statusText, style = MaterialTheme.typography.bodyMedium)
             }
         }
     }

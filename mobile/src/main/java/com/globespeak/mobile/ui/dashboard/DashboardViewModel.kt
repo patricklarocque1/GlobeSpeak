@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.globespeak.engine.TranslatorEngine
+import com.globespeak.engine.proto.EngineState
+import com.globespeak.engine.proto.EngineStatus
 import com.globespeak.engine.backend.BackendFactory
 import com.globespeak.mobile.data.NodeRepository
 import com.globespeak.mobile.data.appDataStore
@@ -16,6 +18,7 @@ import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -27,6 +30,13 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
 
     val serviceRunning: StateFlow<Boolean> = TranslationService.running
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    private val engineState: StateFlow<EngineState> = TranslationService.engineState
+        .stateIn(viewModelScope, SharingStarted.Eagerly, TranslationService.engineState.value)
+
+    val engineStatusText: StateFlow<String> = engineState
+        .map { formatEngineStatus(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, formatEngineStatus(engineState.value))
 
     val nodes: StateFlow<List<Node>> = nodeRepo.connectedNodes()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -87,5 +97,29 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (_: Throwable) {}
         }
+    }
+}
+
+private fun formatEngineStatus(state: EngineState): String {
+    return when (state.status) {
+        EngineStatus.Ready -> "Whisper ready"
+        EngineStatus.WhisperUnavailable -> buildString {
+            append("Whisper unavailable")
+            state.statusReason?.takeIf { it.isNotBlank() }?.let {
+                append(" (")
+                append(it)
+                append(")")
+            }
+        }
+        EngineStatus.Error -> buildString {
+            append("Engine error")
+            val reason = state.statusReason ?: state.lastError
+            reason?.takeIf { it.isNotBlank() }?.let {
+                append(" (")
+                append(it)
+                append(")")
+            }
+        }
+        EngineStatus.Unknown -> "Status unknown"
     }
 }

@@ -6,7 +6,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:name=".GlobeSpeakApp"
+        android:name="com.globespeak.mobile.GlobeSpeakApp"
         android:label="GlobeSpeak"
         android:supportsRtl="true"
         android:theme="@style/Theme.GlobeSpeak"

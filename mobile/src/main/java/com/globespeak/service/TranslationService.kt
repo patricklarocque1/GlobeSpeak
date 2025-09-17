@@ -8,11 +8,16 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.globespeak.engine.TranslatorEngine
+import com.globespeak.engine.asr.NoOpStreamingAsr
+import com.globespeak.engine.asr.StreamingAsr
 import com.globespeak.engine.backend.BackendFactory
+import com.globespeak.engine.whisper.WhisperStreamingSession
 import com.globespeak.engine.proto.EngineState
+import com.globespeak.engine.proto.EngineStatus
 import com.globespeak.shared.Bridge
 import com.google.android.gms.wearable.ChannelClient
 import com.google.android.gms.wearable.MessageClient
+import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import kotlinx.coroutines.CoroutineScope
@@ -20,21 +25,26 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.DataInputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import com.globespeak.mobile.logging.LogBus
 import com.globespeak.mobile.logging.LogLine
 import com.globespeak.mobile.data.Settings
 import com.globespeak.mobile.data.appDataStore
-import kotlinx.coroutines.flow.first
 import org.json.JSONObject
 
 class TranslationService : WearableListenerService() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
-    private val engine by lazy { TranslatorEngine(BackendFactory.build(this, this.appDataStore)) }
+    private val dependencies by lazy { dependenciesFactory?.invoke(this) ?: createDefaultDependencies() }
     private val settings by lazy { Settings(this) }
+
+    private val translator get() = dependencies.translator
+    private val streamingAsrFactory get() = dependencies.streamingAsrFactory
+    private val messageClient get() = dependencies.messageClient
+    private val channelClient get() = dependencies.channelClient
+    private val backendInfo get() = dependencies.backendInfo
 
     override fun onCreate() {
         super.onCreate()
@@ -43,12 +53,35 @@ class TranslationService : WearableListenerService() {
         startForeground(NOTIF_ID, buildNotification("Idle – waiting for audio"))
         _running.tryEmit(true)
         LogBus.log(TAG, "Service created", LogLine.Kind.DATALAYER)
+        val info = backendInfo
+        LogBus.log(
+            TAG,
+            "Backend selected=${info.selected} active=${info.active} reason=${info.reason ?: "none"}",
+            LogLine.Kind.ENGINE
+        )
+        val fallbackReason = whisperFallbackReason(info.reason)
+        if (info.selected == "advanced" && info.active != "advanced") {
+            updateEngineState(
+                status = EngineStatus.WhisperUnavailable,
+                statusReason = StatusReasonUpdate.Set(fallbackReason)
+            )
+        } else {
+            updateEngineState(
+                status = EngineStatus.Ready,
+                statusReason = StatusReasonUpdate.Set(null)
+            )
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         _running.tryEmit(false)
         LogBus.log(TAG, "Service destroyed", LogLine.Kind.DATALAYER)
+        updateEngineState(
+            connected = false,
+            status = EngineStatus.Unknown,
+            statusReason = StatusReasonUpdate.Set(null)
+        )
     }
 
     override fun onChannelOpened(channel: com.google.android.gms.wearable.ChannelClient.Channel) {
@@ -62,52 +95,26 @@ class TranslationService : WearableListenerService() {
 
         serviceScope.launch {
             try {
-                val channelClient = Wearable.getChannelClient(this@TranslationService)
                 channelClient.getInputStream(channel).addOnSuccessListener { inputStream ->
                     serviceScope.launch {
                         inputStream.use { inp ->
                             val dis = DataInputStream(inp)
-                            var totalFrames = 0
-                            val asr = StreamingAsr()
+                            val asr = streamingAsrFactory(this@TranslationService)
                             val nodeId = channel.nodeId
-                            val mc = Wearable.getMessageClient(this@TranslationService)
-                            while (true) {
-                                // Read header: seq(int), ts(long), size(int) little endian
-                                val header = ByteArray(16)
-                                val hRead = dis.read(header)
-                                if (hRead <= 0) break
-                                if (hRead < header.size) break
-                                val bb = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
-                                val seq = bb.int
-                                val ts = bb.long
-                                val size = bb.int
-                                if (size <= 0 || size > 256_000) break
-                                val payload = ByteArray(size)
-                                dis.readFully(payload)
-                                totalFrames++
-
-                                val partial = asr.onPcmChunk(payload)
-                                if (partial != null) {
-                                    // Translate partial
-                                    val tgt = try { settings.targetLanguage.first() } catch (_: Throwable) { "en" }
-                                    try { engine.ensureModel(tgt) } catch (_: Throwable) {}
-                                    val t = engine.translate(partial, source = "auto", target = tgt)
-                                    sendTextPacket(mc, nodeId, type = "partial", text = t, seq = seq)
+                            val processor = TranslationStreamProcessor(
+                                translator = translator,
+                                getTargetLanguage = { settings.targetLanguage.first() },
+                                sendText = { type, text, seq ->
+                                    sendTextPacket(messageClient, nodeId, type, text, seq)
                                 }
-                            }
-                            // Finalize
-                            val finalText = asr.finalizeText()
-                            if (finalText.isNotEmpty()) {
-                                val tgt = try { settings.targetLanguage.first() } catch (_: Throwable) { "en" }
-                                try { engine.ensureModel(tgt) } catch (_: Throwable) {}
-                                val t = engine.translate(finalText, source = "auto", target = tgt)
-                                sendTextPacket(Wearable.getMessageClient(this@TranslationService), channel.nodeId, type = "final", text = t, seq = asr.seq)
-                            }
-                            Log.i(TAG, "Processed frames=$totalFrames")
+                            )
+                            val frames = processor.process(dis, asr)
+                            Log.i(TAG, "Processed frames=$frames")
                         }
                     }
                 }.addOnFailureListener { e ->
                     Log.e(TAG, "Failed to get InputStream for channel", e)
+                    LogBus.log(TAG, "Input stream failure: ${e.message}", LogLine.Kind.DATALAYER)
                 }.addOnCompleteListener {
                     // Stop foreground once async tasks scheduled; actual stream reading occurs above
                     stopForeground(STOP_FOREGROUND_DETACH)
@@ -131,14 +138,18 @@ class TranslationService : WearableListenerService() {
                 // Ack handshake
                 Wearable.getMessageClient(this)
                     .sendMessage(event.sourceNodeId, Bridge.PATH_CONTROL_HANDSHAKE, ByteArray(0))
-                publishState(connected = true)
+                val now = System.currentTimeMillis()
+                updateEngineState(
+                    connected = true,
+                    heartbeatAt = now
+                )
             }
             Bridge.PATH_CONTROL_HEARTBEAT -> {
                 // Echo back timestamp for RTT measurement
                 Wearable.getMessageClient(this)
                     .sendMessage(event.sourceNodeId, Bridge.PATH_CONTROL_HEARTBEAT, event.data ?: ByteArray(0))
-                lastHeartbeatAt = System.currentTimeMillis()
-                publishState(connected = true)
+                val now = System.currentTimeMillis()
+                updateEngineState(connected = true, heartbeatAt = now)
             }
         }
     }
@@ -152,16 +163,88 @@ class TranslationService : WearableListenerService() {
         mc.sendMessage(nodeId, Bridge.PATH_TEXT_OUT, bytes)
     }
 
-    private fun publishState(connected: Boolean, error: String? = null) {
+    private fun createDefaultDependencies(): Dependencies {
+        val (backend, info) = BackendFactory.buildWithInfo(this, this.appDataStore)
+        return Dependencies(
+            translator = TranslatorEngine(backend),
+            streamingAsrFactory = { ctx -> defaultStreamingAsr(ctx) },
+            messageClient = Wearable.getMessageClient(this),
+            channelClient = Wearable.getChannelClient(this),
+            backendInfo = info
+        )
+    }
+
+    private fun defaultStreamingAsr(context: Context): StreamingAsr {
+        return runCatching { WhisperStreamingSession(context) }
+            .onSuccess {
+                updateEngineState(
+                    status = EngineStatus.Ready,
+                    statusReason = StatusReasonUpdate.Set(null)
+                )
+            }
+            .onFailure { t ->
+                val reason = whisperFallbackReason(t.message)
+                LogBus.log(TAG, "Whisper unavailable: ${t.message}", LogLine.Kind.ENGINE)
+                updateEngineState(
+                    status = EngineStatus.WhisperUnavailable,
+                    statusReason = StatusReasonUpdate.Set(reason)
+                )
+            }
+            .getOrElse { NoOpStreamingAsr() }
+    }
+
+    private fun whisperFallbackReason(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        return raw.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    }
+
+    private fun updateEngineState(
+        connected: Boolean? = null,
+        heartbeatAt: Long? = null,
+        status: EngineStatus? = null,
+        statusReason: StatusReasonUpdate = StatusReasonUpdate.Unchanged,
+        lastError: ErrorUpdate = ErrorUpdate.Unchanged
+    ) {
+        var state = _engineState.value
+        if (connected != null) state = state.copy(connected = connected)
+        if (heartbeatAt != null) state = state.copy(lastHeartbeatAt = heartbeatAt)
+        if (status != null) state = state.copy(status = status)
+        when (statusReason) {
+            StatusReasonUpdate.Unchanged -> Unit
+            is StatusReasonUpdate.Set -> state = state.copy(statusReason = statusReason.value)
+        }
+        when (lastError) {
+            ErrorUpdate.Unchanged -> Unit
+            is ErrorUpdate.Set -> state = state.copy(lastError = lastError.value)
+        }
+        _engineState.value = state
+        pushEngineStateToWear(state)
+    }
+
+    private fun pushEngineStateToWear(state: EngineState) {
         try {
-            val state = EngineState(connected, lastHeartbeatAt, error)
-            val dataClient = Wearable.getDataClient(this)
-            val data = com.google.android.gms.wearable.PutDataMapRequest.create(Bridge.PATH_ENGINE_STATE)
-            data.dataMap.putBoolean("connected", state.connected)
-            data.dataMap.putLong("lastHeartbeatAt", state.lastHeartbeatAt)
-            state.lastError?.let { data.dataMap.putString("lastError", it) }
-            dataClient.putDataItem(data.asPutDataRequest())
-        } catch (_: Throwable) {}
+            val data = PutDataMapRequest.create(Bridge.PATH_ENGINE_STATE)
+            val map = data.dataMap
+            map.putBoolean("connected", state.connected)
+            map.putLong("lastHeartbeatAt", state.lastHeartbeatAt)
+            map.putString("status", state.status.name)
+            state.statusReason?.let { map.putString("statusReason", it) } ?: map.remove("statusReason")
+            state.lastError?.let { map.putString("lastError", it) } ?: map.remove("lastError")
+            state.modelsReady?.let { map.putBoolean("modelsReady", it) }
+            Wearable.getDataClient(this).putDataItem(data.setUrgent().asPutDataRequest())
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to push engine state", t)
+        }
+    }
+
+    private sealed interface StatusReasonUpdate {
+        object Unchanged : StatusReasonUpdate
+        data class Set(val value: String?) : StatusReasonUpdate
+    }
+
+    private sealed interface ErrorUpdate {
+        object Unchanged : ErrorUpdate
+        data class Set(val value: String?) : ErrorUpdate
     }
 
     private fun ensureNotificationChannel() {
@@ -191,28 +274,17 @@ class TranslationService : WearableListenerService() {
         private const val NOTIF_ID = 1001
         private val _running = MutableStateFlow(false)
         val running = _running.asStateFlow()
-        private var lastHeartbeatAt: Long = 0L
-    }
-}
-
-/**
- * Minimal streaming ASR stub that emits a partial every ~20KB and a final at end.
- */
-private class StreamingAsr {
-    private val buffer = java.io.ByteArrayOutputStream()
-    private var bytesSinceLastPartial = 0
-    var seq: Int = 0
-
-    fun onPcmChunk(pcm: ByteArray): String? {
-        buffer.write(pcm)
-        bytesSinceLastPartial += pcm.size
-        return if (bytesSinceLastPartial >= 20_000) {
-            bytesSinceLastPartial = 0
-            "TRANSCRIPT(len=${buffer.size()})"
-        } else null
+        private val initialEngineState = EngineState(connected = false, lastHeartbeatAt = 0L)
+        private val _engineState = MutableStateFlow(initialEngineState)
+        val engineState: StateFlow<EngineState> = _engineState.asStateFlow()
+        internal var dependenciesFactory: ((TranslationService) -> Dependencies)? = null
     }
 
-    fun finalizeText(): String {
-        return "TRANSCRIPT(len=${buffer.size()})"
-    }
+    data class Dependencies(
+        val translator: TranslatorEngine,
+        val streamingAsrFactory: (Context) -> StreamingAsr,
+        val messageClient: MessageClient,
+        val channelClient: ChannelClient,
+        val backendInfo: BackendFactory.EngineSelectionInfo
+    )
 }

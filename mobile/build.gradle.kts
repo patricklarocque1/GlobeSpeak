@@ -14,6 +14,7 @@ android {
     targetSdk = (project.findProperty("targetSdkMobile") as String).toInt()
     versionCode = 1
     versionName = "0.1.0"
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     ndk {
       abiFilters += listOf("arm64-v8a", "x86_64")
     }
@@ -74,4 +75,9 @@ dependencies {
   implementation("com.jakewharton.timber:timber:5.0.1")
 
   testImplementation("junit:junit:4.13.2")
+  androidTestImplementation("androidx.test.ext:junit:1.1.5")
+  androidTestImplementation("androidx.test:runner:1.5.2")
+  androidTestImplementation("androidx.test:rules:1.5.0")
+  androidTestImplementation("androidx.test:core-ktx:1.5.0")
+  androidTestImplementation("com.google.truth:truth:1.1.5")
 }
