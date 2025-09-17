@@ -66,10 +66,16 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         val tgt = _target.value
         viewModelScope.launch {
             // Ensure target model, then auto-detect source and translate
-            try { engine.ensureModel(tgt) } catch (_: Throwable) {}
+            LogBus.log("Dashboard", "Model ensure (target=$tgt)", LogLine.Kind.ENGINE)
+            try {
+                engine.ensureModel(tgt)
+                LogBus.log("Dashboard", "Model Ready: $tgt", LogLine.Kind.ENGINE)
+            } catch (e: Throwable) {
+                LogBus.log("Dashboard", "Model Error: ${e.message}", LogLine.Kind.ENGINE)
+            }
             val out = engine.translate(text, source = "auto", target = tgt)
             _result.value = out
-            LogBus.log("Dashboard", "Translated -> $out", LogLine.Kind.ENGINE)
+            LogBus.log("Dashboard", "Translation complete: [auto->$tgt] \"${text.take(24)}\"", LogLine.Kind.ENGINE)
 
             // Best-effort: send translation to first connected node
             try {

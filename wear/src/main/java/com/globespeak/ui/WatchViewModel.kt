@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import com.globespeak.shared.Bridge
 
 enum class WatchStatus { Disconnected, Ready, Listening, Translating }
 
@@ -28,6 +29,9 @@ class WatchViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _messages = MutableStateFlow<List<MessageItem>>(emptyList())
     val messages: StateFlow<List<MessageItem>> = _messages.asStateFlow()
+
+    private val _targetLang = MutableStateFlow("—")
+    val targetLang: StateFlow<String> = _targetLang.asStateFlow()
 
     init {
         refreshNodes()
@@ -65,4 +69,6 @@ class WatchViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clear() { _messages.value = emptyList() }
+
+    fun setTargetLang(tag: String) { _targetLang.value = tag }
 }
