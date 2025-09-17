@@ -59,11 +59,25 @@ class WatchViewModel(app: Application) : AndroidViewModel(app) {
         refreshNodes()
     }
 
-    fun addTranslation(text: String) {
+    fun addPartial(text: String) {
+        _status.value = WatchStatus.Translating
         val updated = _messages.value.toMutableList()
-        // Add placeholder user transcript then translation
-        updated.add(MessageItem(from = "You", text = "…"))
-        updated.add(MessageItem(from = "GlobeSpeak", text = text))
+        if (updated.isNotEmpty() && updated.last().from == "Partial") {
+            updated[updated.lastIndex] = MessageItem(from = "Partial", text = text)
+        } else {
+            updated.add(MessageItem(from = "Partial", text = text))
+        }
+        _messages.value = updated.takeLast(100)
+    }
+
+    fun addFinal(text: String) {
+        val updated = _messages.value.toMutableList()
+        // Replace last Partial with final, or append
+        if (updated.isNotEmpty() && updated.last().from == "Partial") {
+            updated[updated.lastIndex] = MessageItem(from = "GlobeSpeak", text = text)
+        } else {
+            updated.add(MessageItem(from = "GlobeSpeak", text = text))
+        }
         _messages.value = updated.takeLast(100)
         _status.value = if (_capturing.value) WatchStatus.Listening else WatchStatus.Ready
     }

@@ -37,6 +37,8 @@ dependencies {
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:${project.findProperty("coroutines.version")}")
   implementation("com.google.mlkit:translate:17.0.2")
   implementation("com.google.mlkit:language-id:17.0.0")
+  implementation("androidx.datastore:datastore-preferences:1.1.1")
+  implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.0")
 
   testImplementation("junit:junit:4.13.2")
 }

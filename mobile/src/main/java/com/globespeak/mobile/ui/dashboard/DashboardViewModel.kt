@@ -4,8 +4,9 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.globespeak.engine.TranslatorEngine
-import com.globespeak.engine.mlkit.MLKitTranslationBackend
+import com.globespeak.engine.backend.BackendFactory
 import com.globespeak.mobile.data.NodeRepository
+import com.globespeak.mobile.data.appDataStore
 import com.globespeak.mobile.data.ServiceController
 import com.globespeak.mobile.logging.LogBus
 import com.globespeak.mobile.logging.LogLine
@@ -22,7 +23,7 @@ import kotlinx.coroutines.tasks.await
 class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     private val ctx get() = getApplication<Application>()
     private val nodeRepo = NodeRepository(ctx)
-    private val engine = TranslatorEngine(MLKitTranslationBackend())
+    private val engine = TranslatorEngine(BackendFactory.build(ctx, ctx.appDataStore))
 
     val serviceRunning: StateFlow<Boolean> = TranslationService.running
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -82,7 +83,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                 val nodes = Wearable.getNodeClient(ctx).connectedNodes.await()
                 nodes.firstOrNull()?.let { node ->
                     Wearable.getMessageClient(ctx)
-                        .sendMessage(node.id, com.globespeak.service.TranslationService.TRANSLATION_PATH, out.encodeToByteArray())
+                        .sendMessage(node.id, com.globespeak.shared.Bridge.PATH_TEXT_OUT, out.encodeToByteArray())
                 }
             } catch (_: Throwable) {}
         }
