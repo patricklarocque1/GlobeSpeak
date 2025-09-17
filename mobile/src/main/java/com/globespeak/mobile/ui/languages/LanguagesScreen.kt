@@ -70,10 +70,11 @@ fun LanguagesScreen(vm: LanguagesViewModel = viewModel()) {
                     Button(onClick = { vm.setEngineMode("standard") }, enabled = ui.engineMode != "standard") { Text("Standard (ML Kit)") }
                     Button(onClick = { vm.setEngineMode("advanced") }, enabled = ui.engineMode != "advanced") { Text("Advanced (NLLB-ONNX)") }
                 }
-                Text("Device capability: ${if (ui.deviceCapable) "OK" else "Not supported"}")
-                Text("NLLB model: ${if (ui.nllbModelPresent) "Found" else "Missing"}")
-                val active = if (ui.engineMode == "advanced" && ui.deviceCapable && ui.nllbModelPresent) "Advanced" else "Standard (fallback)"
-                Text("Active: $active")
+                Text("Device capability: " + (if (ui.deviceCapable) "OK" else "Not supported"))
+                Text("NLLB model: " + (if (ui.nllbModelPresent) "Found" else "Missing"))
+                val active = if (ui.activeEngine == "advanced") "Advanced" else "Standard"
+                val reason = ui.fallbackReason
+                Text("Active: $active" + (if (reason != null) " [fallback: $reason]" else ""))
             }
         }
         Card(Modifier.fillMaxWidth()) {

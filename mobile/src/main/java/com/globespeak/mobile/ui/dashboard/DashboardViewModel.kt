@@ -83,7 +83,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                 val nodes = Wearable.getNodeClient(ctx).connectedNodes.await()
                 nodes.firstOrNull()?.let { node ->
                     Wearable.getMessageClient(ctx)
-                        .sendMessage(node.id, com.globespeak.service.TranslationService.TRANSLATION_PATH, out.encodeToByteArray())
+                        .sendMessage(node.id, com.globespeak.shared.Bridge.PATH_TEXT_OUT, out.encodeToByteArray())
                 }
             } catch (_: Throwable) {}
         }

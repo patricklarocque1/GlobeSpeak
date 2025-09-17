@@ -5,6 +5,8 @@ import com.globespeak.engine.TranslationBackend
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import kotlinx.coroutines.Dispatchers
+import com.globespeak.engine.nllb.spm.SentencePiece
+import com.globespeak.engine.nllb.PromptBuilder
 import kotlinx.coroutines.withContext
 
 class NllbOnnxTranslationBackend(
@@ -42,7 +44,12 @@ class NllbOnnxTranslationBackend(
         if (session == null) {
             synchronized(this) {
                 if (session == null) {
-                    val opts = OrtSession.SessionOptions()
+                    val opts = OrtSession.SessionOptions().apply {
+                        setIntraOpNumThreads(Runtime.getRuntime().availableProcessors().coerceAtMost(4))
+                        setInterOpNumThreads(1)
+                        // Use default optimization level; some artifacts vary in enums
+                        // setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ORT_ENABLE_ALL)
+                    }
                     session = env.createSession(models.modelFile().absolutePath, opts)
                 }
             }
@@ -57,10 +64,11 @@ class NllbOnnxTranslationBackend(
         require(models.hasNllbModel()) { "NLLB model missing" }
         ensureSession()
 
-        // Placeholder: In a full implementation, tokenize with NLLB tokenizer and run the model.
-        // For now return a tagged string to show backend selection worked.
-        val src = sourceLangTagOrNull ?: LangId.detectOrDefault(text)
-        val tgt = targetLangTag
-        "[nllb $src->$tgt] $text"
+        val sp = SentencePiece.load(app)
+        val norm = com.globespeak.engine.nllb.spm.TextNormalizer.normalize(text)
+        val raw = sp.encode(norm)
+        val withTag = com.globespeak.engine.nllb.PromptBuilder.applyTargetTag(raw, targetLangTag) { sp.tokenToId(it) }
+        val ids = NllbSession(env, session!!).greedyDecode(withTag, maxNewTokens = 128, eosId = sp.eosId())
+        sp.decode(ids)
     }
 }

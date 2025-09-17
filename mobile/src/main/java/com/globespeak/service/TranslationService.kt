@@ -9,14 +9,19 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.globespeak.engine.TranslatorEngine
 import com.globespeak.engine.backend.BackendFactory
+import com.globespeak.engine.proto.EngineState
+import com.globespeak.shared.Bridge
 import com.google.android.gms.wearable.ChannelClient
+import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.globespeak.mobile.logging.LogBus
@@ -24,6 +29,7 @@ import com.globespeak.mobile.logging.LogLine
 import com.globespeak.mobile.data.Settings
 import com.globespeak.mobile.data.appDataStore
 import kotlinx.coroutines.flow.first
+import org.json.JSONObject
 
 class TranslationService : WearableListenerService() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
@@ -33,6 +39,8 @@ class TranslationService : WearableListenerService() {
     override fun onCreate() {
         super.onCreate()
         ensureNotificationChannel()
+        // Enter foreground immediately to satisfy startForegroundService() deadline
+        startForeground(NOTIF_ID, buildNotification("Idle – waiting for audio"))
         _running.tryEmit(true)
         LogBus.log(TAG, "Service created", LogLine.Kind.DATALAYER)
     }
@@ -47,7 +55,7 @@ class TranslationService : WearableListenerService() {
         super.onChannelOpened(channel)
         Log.i(TAG, "Channel opened: ${channel.path} from ${channel.nodeId}")
         LogBus.log(TAG, "Channel opened ${channel.path} from ${channel.nodeId}", LogLine.Kind.DATALAYER)
-        if (channel.path != AUDIO_PATH) return
+        if (channel.path != Bridge.PATH_AUDIO_PCM16) return
 
         // Keep service in foreground while processing the audio stream
         startForeground(NOTIF_ID, buildNotification("Receiving audio…"))
@@ -57,45 +65,46 @@ class TranslationService : WearableListenerService() {
                 val channelClient = Wearable.getChannelClient(this@TranslationService)
                 channelClient.getInputStream(channel).addOnSuccessListener { inputStream ->
                     serviceScope.launch {
-                        val baos = ByteArrayOutputStream()
-                        val buffer = ByteArray(16 * 1024)
-                        var total = 0
                         inputStream.use { inp ->
+                            val dis = DataInputStream(inp)
+                            var totalFrames = 0
+                            val asr = StreamingAsr()
+                            val nodeId = channel.nodeId
+                            val mc = Wearable.getMessageClient(this@TranslationService)
                             while (true) {
-                                val n = inp.read(buffer)
-                                if (n <= 0) break
-                                baos.write(buffer, 0, n)
-                                total += n
-                                if (total % (64 * 1024) == 0) {
-                                    Log.d(TAG, "Read $total bytes…")
+                                // Read header: seq(int), ts(long), size(int) little endian
+                                val header = ByteArray(16)
+                                val hRead = dis.read(header)
+                                if (hRead <= 0) break
+                                if (hRead < header.size) break
+                                val bb = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+                                val seq = bb.int
+                                val ts = bb.long
+                                val size = bb.int
+                                if (size <= 0 || size > 256_000) break
+                                val payload = ByteArray(size)
+                                dis.readFully(payload)
+                                totalFrames++
+
+                                val partial = asr.onPcmChunk(payload)
+                                if (partial != null) {
+                                    // Translate partial
+                                    val tgt = try { settings.targetLanguage.first() } catch (_: Throwable) { "en" }
+                                    try { engine.ensureModel(tgt) } catch (_: Throwable) {}
+                                    val t = engine.translate(partial, source = "auto", target = tgt)
+                                    sendTextPacket(mc, nodeId, type = "partial", text = t, seq = seq)
                                 }
                             }
-                        }
-
-                        val pcm = baos.toByteArray()
-                        Log.i(TAG, "Finished reading ${pcm.size} bytes. Transcribing…")
-                        LogBus.log(TAG, "Received audio bytes=${pcm.size}", LogLine.Kind.DATALAYER)
-                        val transcript = engine.transcribePcm16LeMono16k(pcm)
-                        LogBus.log(TAG, "Transcript: $transcript", LogLine.Kind.ENGINE)
-                        val tgt = try { settings.targetLanguage.first() } catch (_: Throwable) { "en" }
-                        LogBus.log(TAG, "Model ensure (target=$tgt)", LogLine.Kind.ENGINE)
-                        try { engine.ensureModel(tgt); LogBus.log(TAG, "Model Ready: $tgt", LogLine.Kind.ENGINE) } catch (e: Throwable) {
-                            LogBus.log(TAG, "Model Error: ${e.message}", LogLine.Kind.ENGINE)
-                        }
-                        val translated = engine.translate(transcript, source = "auto", target = tgt)
-
-                        // Send translation back to the originating node
-                        val bytes = translated.encodeToByteArray()
-                        Wearable.getMessageClient(this@TranslationService)
-                            .sendMessage(channel.nodeId, TRANSLATION_PATH, bytes)
-                            .addOnSuccessListener {
-                                Log.i(TAG, "Sent translation (${bytes.size} bytes)")
-                                LogBus.log(TAG, "Sent translation bytes=${bytes.size}", LogLine.Kind.DATALAYER)
+                            // Finalize
+                            val finalText = asr.finalizeText()
+                            if (finalText.isNotEmpty()) {
+                                val tgt = try { settings.targetLanguage.first() } catch (_: Throwable) { "en" }
+                                try { engine.ensureModel(tgt) } catch (_: Throwable) {}
+                                val t = engine.translate(finalText, source = "auto", target = tgt)
+                                sendTextPacket(Wearable.getMessageClient(this@TranslationService), channel.nodeId, type = "final", text = t, seq = asr.seq)
                             }
-                            .addOnFailureListener { e ->
-                                Log.e(TAG, "Failed to send translation", e)
-                                LogBus.log(TAG, "Failed to send translation: ${e.message}", LogLine.Kind.DATALAYER)
-                            }
+                            Log.i(TAG, "Processed frames=$totalFrames")
+                        }
                     }
                 }.addOnFailureListener { e ->
                     Log.e(TAG, "Failed to get InputStream for channel", e)
@@ -114,6 +123,45 @@ class TranslationService : WearableListenerService() {
     override fun onChannelClosed(channel: ChannelClient.Channel, p1: Int, p2: Int) {
         super.onChannelClosed(channel, p1, p2)
         Log.i(TAG, "Channel closed: ${channel.path}")
+    }
+
+    override fun onMessageReceived(event: com.google.android.gms.wearable.MessageEvent) {
+        when (event.path) {
+            Bridge.PATH_CONTROL_HANDSHAKE -> {
+                // Ack handshake
+                Wearable.getMessageClient(this)
+                    .sendMessage(event.sourceNodeId, Bridge.PATH_CONTROL_HANDSHAKE, ByteArray(0))
+                publishState(connected = true)
+            }
+            Bridge.PATH_CONTROL_HEARTBEAT -> {
+                // Echo back timestamp for RTT measurement
+                Wearable.getMessageClient(this)
+                    .sendMessage(event.sourceNodeId, Bridge.PATH_CONTROL_HEARTBEAT, event.data ?: ByteArray(0))
+                lastHeartbeatAt = System.currentTimeMillis()
+                publishState(connected = true)
+            }
+        }
+    }
+
+    private fun sendTextPacket(mc: MessageClient, nodeId: String, type: String, text: String, seq: Int) {
+        val json = JSONObject()
+            .put("type", type)
+            .put("text", text)
+            .put("seq", seq)
+        val bytes = json.toString().encodeToByteArray()
+        mc.sendMessage(nodeId, Bridge.PATH_TEXT_OUT, bytes)
+    }
+
+    private fun publishState(connected: Boolean, error: String? = null) {
+        try {
+            val state = EngineState(connected, lastHeartbeatAt, error)
+            val dataClient = Wearable.getDataClient(this)
+            val data = com.google.android.gms.wearable.PutDataMapRequest.create(Bridge.PATH_ENGINE_STATE)
+            data.dataMap.putBoolean("connected", state.connected)
+            data.dataMap.putLong("lastHeartbeatAt", state.lastHeartbeatAt)
+            state.lastError?.let { data.dataMap.putString("lastError", it) }
+            dataClient.putDataItem(data.asPutDataRequest())
+        } catch (_: Throwable) {}
     }
 
     private fun ensureNotificationChannel() {
@@ -139,11 +187,32 @@ class TranslationService : WearableListenerService() {
 
     companion object {
         private const val TAG = "TranslationService"
-        const val AUDIO_PATH = "/audio"
-        const val TRANSLATION_PATH = "/translation"
         private const val NOTIF_CHANNEL_ID = "globespeak.translation"
         private const val NOTIF_ID = 1001
         private val _running = MutableStateFlow(false)
         val running = _running.asStateFlow()
+        private var lastHeartbeatAt: Long = 0L
+    }
+}
+
+/**
+ * Minimal streaming ASR stub that emits a partial every ~20KB and a final at end.
+ */
+private class StreamingAsr {
+    private val buffer = java.io.ByteArrayOutputStream()
+    private var bytesSinceLastPartial = 0
+    var seq: Int = 0
+
+    fun onPcmChunk(pcm: ByteArray): String? {
+        buffer.write(pcm)
+        bytesSinceLastPartial += pcm.size
+        return if (bytesSinceLastPartial >= 20_000) {
+            bytesSinceLastPartial = 0
+            "TRANSCRIPT(len=${buffer.size()})"
+        } else null
+    }
+
+    fun finalizeText(): String {
+        return "TRANSCRIPT(len=${buffer.size()})"
     }
 }

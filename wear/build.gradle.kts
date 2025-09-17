@@ -60,6 +60,7 @@ dependencies {
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:${project.findProperty("coroutines.version")}")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:${project.findProperty("coroutines.version")}")
   implementation("com.google.android.gms:play-services-wearable:${project.findProperty("play.services.wearable.version")}")
+  implementation("com.jakewharton.timber:timber:5.0.1")
 
   testImplementation("junit:junit:4.13.2")
 }

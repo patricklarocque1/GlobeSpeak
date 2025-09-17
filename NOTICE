@@ -1,19 +1,22 @@
-GlobeSpeak
+GlobeSpeak — Notices & Attributions
 
-This product bundles or may incorporate components under the Apache License, Version 2.0.
-Where code from third-party projects is included, their original headers and notices are preserved.
+ This project may incorporate the following components. Original licenses, notices, and headers are preserved in their respective source files and distributions.
 
-Notices for included software:
+ — Runtime / Libraries —
+ • ONNX Runtime — © Microsoft. License: MIT. See https://github.com/microsoft/onnxruntime
+ • Kotlin coroutines — © JetBrains/Contributors. License: Apache-2.0.
 
-- RTranslator (https://github.com/niedev/RTranslator) — Apache-2.0
-  Copyright (c) respective copyright holders.
+ — Translation Backends —
+ • ML Kit Translation & Language ID — © Google. See ML Kit terms; on‑device models downloaded at runtime.
+ • NLLB (No Language Left Behind) models — © Meta and contributors. **Refer to the specific model distribution for license and usage terms.** Do not redistribute model files unless permitted by their license.
 
-Additional notices may appear in source files where applicable.
- 
-Onnx Runtime
-- ONNX Runtime for Android (https://github.com/microsoft/onnxruntime) — MIT License
-   © Microsoft Corporation. See project for full license details.
+— Tokenization —
+ • SentencePiece tokenizer and/or derived utilities — © Google/Contributors. License: Apache-2.0.
+   Includes a vendored, minimal SentencePiece `.model` reader (decode‑only) under `engine/nllb/spm/internal/` derived from the format described by SentencePiece (Apache‑2.0). No JNI is used.
 
-NLLB
-- NLLB (No Language Left Behind) models by Meta AI (https://ai.facebook.com/research/no-language-left-behind/)
-  Use of the models is subject to Meta's model license. Models are not distributed with this app; users may sideload them.
+ — Upstream Inspiration —
+ • RTranslator — Apache-2.0. https://github.com/niedev/RTranslator
+
+ Notes:
+ • Advanced backend model files (`nllb.onnx` , `tokenizer.model` ) are **sideloaded** by the user into app private storage (`filesDir/models/nllb/` ). They are **not** shipped in the APK/AAB.
+ • GlobeSpeak operates fully **offline** for translation. User speech/text is not sent to external services.
