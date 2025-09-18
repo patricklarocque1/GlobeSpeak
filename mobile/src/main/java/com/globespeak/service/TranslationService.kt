@@ -6,12 +6,12 @@ import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import android.content.pm.ServiceInfo
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import com.globespeak.engine.TranslatorEngine
-import com.globespeak.engine.asr.NoOpStreamingAsr
-import com.globespeak.engine.asr.StreamingAsr
+import com.globespeak.engine.asr.AsrFactory
 import com.globespeak.engine.backend.BackendFactory
-import com.globespeak.engine.whisper.WhisperStreamingSession
 import com.globespeak.engine.proto.EngineState
 import com.globespeak.engine.proto.EngineStatus
 import com.globespeak.shared.Bridge
@@ -24,6 +24,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import java.io.DataInputStream
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,16 +42,18 @@ class TranslationService : WearableListenerService() {
     private val settings by lazy { Settings(this) }
 
     private val translator get() = dependencies.translator
-    private val streamingAsrFactory get() = dependencies.streamingAsrFactory
+    private val asrSelection get() = dependencies.asrSelection
     private val messageClient get() = dependencies.messageClient
     private val channelClient get() = dependencies.channelClient
     private val backendInfo get() = dependencies.backendInfo
+
+    private var lastAsrStatus: AsrStatusSnapshot? = null
 
     override fun onCreate() {
         super.onCreate()
         ensureNotificationChannel()
         // Enter foreground immediately to satisfy startForegroundService() deadline
-        startForeground(NOTIF_ID, buildNotification("Idle – waiting for audio"))
+        promoteToForeground("Idle – waiting for audio")
         _running.tryEmit(true)
         LogBus.log(TAG, "Service created", LogLine.Kind.DATALAYER)
         val info = backendInfo
@@ -59,18 +62,7 @@ class TranslationService : WearableListenerService() {
             "Backend selected=${info.selected} active=${info.active} reason=${info.reason ?: "none"}",
             LogLine.Kind.ENGINE
         )
-        val fallbackReason = whisperFallbackReason(info.reason)
-        if (info.selected == "advanced" && info.active != "advanced") {
-            updateEngineState(
-                status = EngineStatus.WhisperUnavailable,
-                statusReason = StatusReasonUpdate.Set(fallbackReason)
-            )
-        } else {
-            updateEngineState(
-                status = EngineStatus.Ready,
-                statusReason = StatusReasonUpdate.Set(null)
-            )
-        }
+        applyAsrStatus(dependencies.initialAsrStatus)
     }
 
     override fun onDestroy() {
@@ -91,7 +83,7 @@ class TranslationService : WearableListenerService() {
         if (channel.path != Bridge.PATH_AUDIO_PCM16) return
 
         // Keep service in foreground while processing the audio stream
-        startForeground(NOTIF_ID, buildNotification("Receiving audio…"))
+        promoteToForeground("Receiving audio…")
 
         serviceScope.launch {
             try {
@@ -99,13 +91,44 @@ class TranslationService : WearableListenerService() {
                     serviceScope.launch {
                         inputStream.use { inp ->
                             val dis = DataInputStream(inp)
-                            val asr = streamingAsrFactory(this@TranslationService)
+                            val asrInstance = asrSelection.create()
+                            applyAsrStatus(
+                                AsrStatusSnapshot(
+                                    status = asrInstance.status,
+                                    message = asrInstance.statusMessage,
+                                    backend = asrInstance.backend
+                                )
+                            )
+                            LogBus.log(
+                                TAG,
+                                "ASR backend=${asrInstance.backend} status=${asrInstance.status} msg=${asrInstance.statusMessage}",
+                                LogLine.Kind.ENGINE
+                            )
                             val nodeId = channel.nodeId
+                            val asr = asrInstance.asr
                             val processor = TranslationStreamProcessor(
                                 translator = translator,
                                 getTargetLanguage = { settings.targetLanguage.first() },
                                 sendText = { type, text, seq ->
                                     sendTextPacket(messageClient, nodeId, type, text, seq)
+                                },
+                                onAsrFailure = { error ->
+                                    Log.e(TAG, "ASR failure; attempting fallback", error)
+                                    LogBus.log(TAG, "ASR failure: ${error.message}", LogLine.Kind.ENGINE)
+                                    val fallbackInstance = asrSelection.fallback(error.message)
+                                    applyAsrStatus(
+                                        AsrStatusSnapshot(
+                                            status = fallbackInstance.status,
+                                            message = fallbackInstance.statusMessage,
+                                            backend = fallbackInstance.backend
+                                        )
+                                    )
+                                    LogBus.log(
+                                        TAG,
+                                        "ASR switched to backend=${fallbackInstance.backend} status=${fallbackInstance.status} msg=${fallbackInstance.statusMessage}",
+                                        LogLine.Kind.ENGINE
+                                    )
+                                    fallbackInstance.asr
                                 }
                             )
                             val frames = processor.process(dis, asr)
@@ -163,39 +186,65 @@ class TranslationService : WearableListenerService() {
         mc.sendMessage(nodeId, Bridge.PATH_TEXT_OUT, bytes)
     }
 
+    private fun applyAsrStatus(snapshot: AsrStatusSnapshot) {
+        if (snapshot == lastAsrStatus) return
+        lastAsrStatus = snapshot
+
+        val formattedReason = formatReason(snapshot.message)
+        val engineStatus = when (snapshot.status) {
+            AsrFactory.Status.OK -> EngineStatus.Ready
+            AsrFactory.Status.MISSING_MODEL, AsrFactory.Status.UNSUPPORTED_ABI -> EngineStatus.WhisperUnavailable
+            AsrFactory.Status.ERROR -> EngineStatus.Error
+        }
+
+        updateEngineState(
+            status = engineStatus,
+            statusReason = StatusReasonUpdate.Set(formattedReason)
+        )
+
+        broadcastAsrStatus(snapshot.copy(message = formattedReason))
+    }
+
+    private fun broadcastAsrStatus(snapshot: AsrStatusSnapshot) {
+        serviceScope.launch {
+            runCatching {
+                val nodes = Wearable.getNodeClient(this@TranslationService).connectedNodes.await()
+                if (nodes.isEmpty()) return@runCatching
+                val payload = JSONObject()
+                    .put("status", snapshot.status.name)
+                    .put("backend", snapshot.backend.name)
+                snapshot.message?.let { payload.put("message", it) }
+                val bytes = payload.toString().encodeToByteArray()
+                nodes.forEach { node ->
+                    messageClient.sendMessage(node.id, Bridge.PATH_STATUS_ASR, bytes)
+                }
+            }.onFailure { t ->
+                Log.w(TAG, "Failed to broadcast ASR status", t)
+            }
+        }
+    }
+
+    private fun formatReason(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        return raw.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    }
+
     private fun createDefaultDependencies(): Dependencies {
         val (backend, info) = BackendFactory.buildWithInfo(this, this.appDataStore)
+        val asrResult = AsrFactory.build(this)
+        val initialStatus = AsrStatusSnapshot(
+            status = asrResult.initialStatus,
+            message = asrResult.initialMessage,
+            backend = asrResult.expectedBackend
+        )
         return Dependencies(
             translator = TranslatorEngine(backend),
-            streamingAsrFactory = { ctx -> defaultStreamingAsr(ctx) },
+            asrSelection = asrResult,
+            initialAsrStatus = initialStatus,
             messageClient = Wearable.getMessageClient(this),
             channelClient = Wearable.getChannelClient(this),
             backendInfo = info
         )
-    }
-
-    private fun defaultStreamingAsr(context: Context): StreamingAsr {
-        return runCatching { WhisperStreamingSession(context) }
-            .onSuccess {
-                updateEngineState(
-                    status = EngineStatus.Ready,
-                    statusReason = StatusReasonUpdate.Set(null)
-                )
-            }
-            .onFailure { t ->
-                val reason = whisperFallbackReason(t.message)
-                LogBus.log(TAG, "Whisper unavailable: ${t.message}", LogLine.Kind.ENGINE)
-                updateEngineState(
-                    status = EngineStatus.WhisperUnavailable,
-                    statusReason = StatusReasonUpdate.Set(reason)
-                )
-            }
-            .getOrElse { NoOpStreamingAsr() }
-    }
-
-    private fun whisperFallbackReason(raw: String?): String? {
-        if (raw.isNullOrBlank()) return null
-        return raw.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
     }
 
     private fun updateEngineState(
@@ -268,6 +317,16 @@ class TranslationService : WearableListenerService() {
             .build()
     }
 
+    private fun promoteToForeground(message: String) {
+        val notification = buildNotification(message)
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        } else {
+            0
+        }
+        ServiceCompat.startForeground(this, NOTIF_ID, notification, type)
+    }
+
     companion object {
         private const val TAG = "TranslationService"
         private const val NOTIF_CHANNEL_ID = "globespeak.translation"
@@ -280,11 +339,18 @@ class TranslationService : WearableListenerService() {
         internal var dependenciesFactory: ((TranslationService) -> Dependencies)? = null
     }
 
-    data class Dependencies(
+    internal data class Dependencies(
         val translator: TranslatorEngine,
-        val streamingAsrFactory: (Context) -> StreamingAsr,
+        val asrSelection: AsrFactory.Result,
+        val initialAsrStatus: AsrStatusSnapshot,
         val messageClient: MessageClient,
         val channelClient: ChannelClient,
         val backendInfo: BackendFactory.EngineSelectionInfo
+    )
+
+    internal data class AsrStatusSnapshot(
+        val status: AsrFactory.Status,
+        val message: String?,
+        val backend: AsrFactory.Backend
     )
 }

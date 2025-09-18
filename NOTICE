@@ -5,11 +5,13 @@ GlobeSpeak — Notices & Attributions
  — Runtime / Libraries —
  • ONNX Runtime — © Microsoft. License: MIT. See https://github.com/microsoft/onnxruntime
  • Kotlin coroutines — © JetBrains/Contributors. License: Apache-2.0.
+ • whisper.cpp — © Georgi Gerganov and contributors. MIT License. vendored snapshot under `extern/whisper.cpp`.
 
  — Translation Backends —
  • ML Kit Translation & Language ID — © Google. See ML Kit terms; on‑device models downloaded at runtime.
  • NLLB (No Language Left Behind) models — © Meta and contributors. **Refer to the specific model distribution for license and usage terms.** Do not redistribute model files unless permitted by their license.
  • Whisper (OpenAI) — © OpenAI. MIT License. Whisper ONNX exports are sideloaded into app private storage (`filesDir/models/whisper/`).
+ • GGML / GGUF quantised models — © Georgi Gerganov & contributors. Follow the upstream license for redistributed checkpoints.
 
 — Tokenization —
  • SentencePiece tokenizer and/or derived utilities — © Google/Contributors. License: Apache-2.0.

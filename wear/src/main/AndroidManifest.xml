@@ -9,6 +9,8 @@
 
     <application
         android:name="com.globespeak.GlobeSpeakWearApp"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="GlobeSpeak"
         android:supportsRtl="true">
         <meta-data

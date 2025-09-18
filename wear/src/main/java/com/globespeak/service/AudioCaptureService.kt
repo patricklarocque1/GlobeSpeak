@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import com.globespeak.engine.proto.AudioFramer
 import com.globespeak.audio.VadGate
 import com.globespeak.shared.Bridge
@@ -30,6 +31,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.OutputStream
 import java.nio.ByteBuffer
+import android.content.pm.ServiceInfo
+import android.os.Process
 
 class AudioCaptureService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -60,7 +63,7 @@ class AudioCaptureService : Service() {
 
     private fun startCapture() {
         if (recordJob?.isActive == true) return
-        startForeground(NOTIF_ID, buildNotification("Capturing…"))
+        promoteToForeground("Capturing…")
         recordJob = scope.launch {
             try {
                 val node = findPhoneNode() ?: run {
@@ -107,14 +110,16 @@ class AudioCaptureService : Service() {
         val sampleRate = 16_000
         val channelConfig = AudioFormat.CHANNEL_IN_MONO
         val encoding = AudioFormat.ENCODING_PCM_16BIT
-        val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, encoding)
-        val bufferSize = (minBuf.coerceAtLeast(8192) / 2) * 2 // even number, >= 8k
+        val bytesPerSample = 2
+        val reportedMin = AudioRecord.getMinBufferSize(sampleRate, channelConfig, encoding)
+        val safeMin = if (reportedMin > 0) reportedMin else sampleRate * bytesPerSample
+        val chunkBytesTarget = bytesPerSample * (sampleRate / 4) // ~250 ms window
+        val bufferSize = alignToMultiple(maxOf(safeMin, chunkBytesTarget), safeMin)
         val buffer = ByteArray(bufferSize)
 
         val vad = VadGate(sampleRate = sampleRate)
         var lastVad = vad.isActive()
         var seq = 1
-        val chunkBytesTarget = 10_240 // ~320ms at 16kHz * 2 bytes
         val chunkBuf = ByteArray(chunkBytesTarget)
         var chunkFill = 0
 
@@ -160,7 +165,7 @@ class AudioCaptureService : Service() {
                         }
                     } else {
                         // If trailing silence and we have a partial chunk, flush it
-                        if (chunkFill > 0 && chunkFill >= 2048) {
+                        if (chunkFill > 0 && chunkFill >= chunkBytesTarget / 4) {
                             val payload = ByteArray(chunkFill)
                             System.arraycopy(chunkBuf, 0, payload, 0, chunkFill)
                             val framed = AudioFramer.frame(seq++, System.currentTimeMillis(), payload)
@@ -203,6 +208,12 @@ class AudioCaptureService : Service() {
         }
     }
 
+    private fun alignToMultiple(value: Int, multiple: Int): Int {
+        if (multiple <= 0) return value
+        val remainder = value % multiple
+        return if (remainder == 0) value else value + (multiple - remainder)
+    }
+
     private fun ensureNotificationChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
             val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -222,6 +233,16 @@ class AudioCaptureService : Service() {
             .setSmallIcon(android.R.drawable.presence_audio_online)
             .setOngoing(true)
             .build()
+    }
+
+    private fun promoteToForeground(message: String) {
+        val notification = buildNotification(message)
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        } else {
+            0
+        }
+        ServiceCompat.startForeground(this, NOTIF_ID, notification, type)
     }
 
     companion object {

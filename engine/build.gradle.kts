@@ -9,6 +9,19 @@ android {
 
   defaultConfig {
     minSdk = (project.findProperty("minSdkMobile") as String).toInt()
+
+    externalNativeBuild {
+      cmake {
+        // Whisper streaming is only supported on 64-bit targets for performance.
+        arguments += listOf("-DANDROID_STL=c++_shared")
+      }
+    }
+
+    ndk {
+      abiFilters += listOf("arm64-v8a", "x86_64")
+    }
+
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
   buildTypes {
@@ -29,6 +42,12 @@ android {
   kotlinOptions {
     jvmTarget = "17"
   }
+
+  externalNativeBuild {
+    cmake {
+      path = file("src/main/native/CMakeLists.txt")
+    }
+  }
 }
 
 dependencies {
@@ -42,4 +61,6 @@ dependencies {
   implementation("com.microsoft.onnxruntime:onnxruntime-extensions-android:0.13.0")
 
   testImplementation("junit:junit:4.13.2")
+  androidTestImplementation("androidx.test:runner:1.5.2")
+  androidTestImplementation("androidx.test.ext:junit:1.1.5")
 }

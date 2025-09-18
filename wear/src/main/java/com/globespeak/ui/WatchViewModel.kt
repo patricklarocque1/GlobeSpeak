@@ -37,6 +37,9 @@ class WatchViewModel(app: Application) : AndroidViewModel(app) {
     private val _engineStatusMessage = MutableStateFlow<String?>(null)
     val engineStatusMessage: StateFlow<String?> = _engineStatusMessage.asStateFlow()
 
+    private val _asrBanner = MutableStateFlow<String?>(null)
+    val asrBanner: StateFlow<String?> = _asrBanner.asStateFlow()
+
     init {
         refreshNodes()
     }
@@ -72,29 +75,17 @@ class WatchViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun updateEngineStatus(status: EngineStatus, reason: String?) {
-        _engineStatusMessage.value = when (status) {
-            EngineStatus.WhisperUnavailable -> buildString {
-                append("Whisper unavailable")
-                reason?.takeIf { it.isNotBlank() }?.let {
-                    append(" (")
-                    append(it)
-                    append(")")
-                }
-            }
-            EngineStatus.Error -> buildString {
-                append("Engine error")
-                reason?.takeIf { it.isNotBlank() }?.let {
-                    append(" (")
-                    append(it)
-                    append(")")
-                }
-            }
-            EngineStatus.Ready -> {
-                _status.value = if (_capturing.value) WatchStatus.Listening else WatchStatus.Ready
-                null
-            }
-            EngineStatus.Unknown -> null
+        when (status) {
+            EngineStatus.Ready -> _status.value = if (_capturing.value) WatchStatus.Listening else WatchStatus.Ready
+            EngineStatus.Unknown -> Unit
+            EngineStatus.WhisperUnavailable, EngineStatus.Error -> Unit
         }
+        setAsrBanner(status.name, reason, backendName = null)
+    }
+
+    fun updateAsrStatus(statusName: String?, backendName: String?, message: String?) {
+        if (statusName.isNullOrBlank()) return
+        setAsrBanner(statusName, message, backendName)
     }
 
     fun addPartial(text: String) {
@@ -123,4 +114,47 @@ class WatchViewModel(app: Application) : AndroidViewModel(app) {
     fun clear() { _messages.value = emptyList() }
 
     fun setTargetLang(tag: String) { _targetLang.value = tag }
+
+    private fun setAsrBanner(statusName: String, reason: String?, backendName: String?) {
+        val normalized = statusName.uppercase()
+        val banner = when (normalized) {
+            "OK", "READY" -> null
+            "MISSING_MODEL", "UNSUPPORTED_ABI", "WHISPERUNAVAILABLE" -> buildString {
+                append("Whisper unavailable")
+                val cleanReason = reason?.takeIf { it.isNotBlank() }
+                cleanReason?.let {
+                    append(" (")
+                    append(it)
+                    append(")")
+                }
+                backendName?.takeIf { it.isNotBlank() && it.uppercase() != "WHISPER_CPP" }?.let {
+                    append(" — fallback: ")
+                    append(friendlyBackendName(it))
+                }
+            }
+            "ERROR" -> buildString {
+                append("Whisper error")
+                val cleanReason = reason?.takeIf { it.isNotBlank() }
+                cleanReason?.let {
+                    append(" (")
+                    append(it)
+                    append(")")
+                }
+                backendName?.takeIf { it.isNotBlank() && it.uppercase() != "WHISPER_CPP" }?.let {
+                    append(" — fallback: ")
+                    append(friendlyBackendName(it))
+                }
+            }
+            else -> reason?.takeIf { it.isNotBlank() }
+        }
+        _engineStatusMessage.value = banner
+        _asrBanner.value = banner
+    }
+
+    private fun friendlyBackendName(raw: String): String = when (raw.uppercase()) {
+        "WHISPER_CPP" -> "whisper.cpp"
+        "WHISPER_ONNX" -> "Whisper ONNX"
+        "STUB" -> "stub"
+        else -> raw.lowercase()
+    }
 }

@@ -38,14 +38,14 @@ import com.google.android.gms.wearable.Node
 import java.util.Locale
 
 @Composable
-fun DashboardScreen(vm: DashboardViewModel = viewModel()) {
+fun DashboardScreen(onImportWhisper: () -> Unit = {}, vm: DashboardViewModel = viewModel()) {
     val running by vm.serviceRunning.collectAsState()
     val nodes by vm.nodes.collectAsState()
     val input by vm.input.collectAsState()
     val target by vm.target.collectAsState()
     val result by vm.result.collectAsState()
     val languages by vm.languages.collectAsState()
-    val statusText by vm.engineStatusText.collectAsState()
+    val asrStatus by vm.asrStatus.collectAsState()
 
     val notifLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -56,11 +56,18 @@ fun DashboardScreen(vm: DashboardViewModel = viewModel()) {
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        ServiceStatusCard(running = running, statusText = statusText, onStart = {
+        ServiceStatusCard(
+            running = running,
+            statusLabel = asrStatus.label,
+            showImport = asrStatus.showImportPrompt,
+            onStart = {
             if (Build.VERSION.SDK_INT >= 33) {
                 notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             } else vm.startService()
-        }, onStop = vm::stopService)
+        },
+            onStop = vm::stopService,
+            onImportWhisper = onImportWhisper
+        )
 
         WearConnectionCard(nodes)
 
@@ -79,9 +86,11 @@ fun DashboardScreen(vm: DashboardViewModel = viewModel()) {
 @Composable
 private fun ServiceStatusCard(
     running: Boolean,
-    statusText: String,
+    statusLabel: String,
+    showImport: Boolean,
     onStart: () -> Unit,
-    onStop: () -> Unit
+    onStop: () -> Unit,
+    onImportWhisper: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -93,9 +102,13 @@ private fun ServiceStatusCard(
                     Text(if (running) "Stop" else "Start")
                 }
             }
-            if (statusText.isNotBlank()) {
+            if (statusLabel.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(statusText, style = MaterialTheme.typography.bodyMedium)
+                Text("ASR: $statusLabel", style = MaterialTheme.typography.bodyMedium)
+            }
+            if (showImport) {
+                Spacer(Modifier.height(6.dp))
+                Button(onClick = onImportWhisper) { Text("Import Whisper model") }
             }
         }
     }

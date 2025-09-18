@@ -75,7 +75,13 @@ fun AppNav() {
             startDestination = Screen.Dashboard.route,
             modifier = androidx.compose.ui.Modifier.padding(padding)
         ) {
-            composable(Screen.Dashboard.route) { DashboardScreen() }
+            composable(Screen.Dashboard.route) {
+                DashboardScreen(onImportWhisper = {
+                    navController.navigate(Screen.Languages.route) {
+                        launchSingleTop = true
+                    }
+                })
+            }
             composable(Screen.Languages.route) { LanguagesScreen() }
             composable(Screen.Logs.route) { LogsScreen() }
             composable(Screen.About.route) { AboutScreen() }

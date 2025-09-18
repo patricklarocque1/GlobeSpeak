@@ -1,12 +1,13 @@
 package com.globespeak.service
 
+import android.app.Application
 import android.content.Context
-import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
-import androidx.test.core.app.ServiceScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.globespeak.engine.TranslatorEngine
 import com.globespeak.engine.TranslationBackend
+import com.globespeak.engine.asr.AsrFactory
 import com.globespeak.engine.asr.AsrFinal
 import com.globespeak.engine.asr.AsrPartial
 import com.globespeak.engine.asr.StreamingAsr
@@ -22,9 +23,9 @@ import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.concurrent.Executor
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -60,13 +61,40 @@ class TranslationServiceTest {
             partialSeq = 10,
             finalSeq = 20
         )
-        val messageClient = FakeMessageClient()
-        val channelClient = FakeChannelClient(bytes)
+        val messageClient = FakeMessageClient(context)
+        val channelClient = FakeChannelClient(context, bytes)
 
-        TranslationService.dependenciesFactory = { service ->
+        val asrResult = AsrFactory.Result(
+            initialStatus = AsrFactory.Status.OK,
+            initialMessage = null,
+            expectedBackend = AsrFactory.Backend.WHISPER_CPP,
+            create = {
+                AsrFactory.AsrInstance(
+                    asr = fakeAsr,
+                    backend = AsrFactory.Backend.WHISPER_CPP,
+                    status = AsrFactory.Status.OK,
+                    statusMessage = null
+                )
+            },
+            fallback = {
+                AsrFactory.AsrInstance(
+                    asr = fakeAsr,
+                    backend = AsrFactory.Backend.WHISPER_CPP,
+                    status = AsrFactory.Status.OK,
+                    statusMessage = null
+                )
+            }
+        )
+
+        TranslationService.dependenciesFactory = { _ ->
             TranslationService.Dependencies(
                 translator = TranslatorEngine(fakeBackend),
-                streamingAsrFactory = { fakeAsr },
+                asrSelection = asrResult,
+                initialAsrStatus = TranslationService.AsrStatusSnapshot(
+                    status = asrResult.initialStatus,
+                    message = asrResult.initialMessage,
+                    backend = asrResult.expectedBackend
+                ),
                 messageClient = messageClient,
                 channelClient = channelClient,
                 backendInfo = BackendFactory.EngineSelectionInfo(
@@ -77,12 +105,9 @@ class TranslationServiceTest {
             )
         }
 
-        val intent = Intent(context, TranslationService::class.java)
-        val scenario = ServiceScenario.launch<TranslationService>(intent)
+        val service = launchTranslationService(context)
         try {
-            scenario.onService { service ->
-                service.onChannelOpened(channelClient.channel)
-            }
+            service.onChannelOpened(channelClient.channel)
 
             val messages = messageClient.awaitMessages(count = 2, timeoutMs = 5_000)
             assertThat(messages.map { it.type }).containsExactly("partial", "final").inOrder()
@@ -99,9 +124,56 @@ class TranslationServiceTest {
                 logs.any { it.msg.contains("active=standard") && it.msg.contains("reason=model missing") }
             ).isTrue()
         } finally {
-            scenario.close()
+            destroyTranslationService(service)
         }
     }
+}
+
+private fun launchTranslationService(context: Context): TranslationService {
+    val instrumentation = InstrumentationRegistry.getInstrumentation()
+    lateinit var service: TranslationService
+    instrumentation.runOnMainSync {
+        service = TranslationService()
+        attachService(service, context)
+        service.onCreate()
+    }
+    return service
+}
+
+private fun destroyTranslationService(service: TranslationService) {
+    val instrumentation = InstrumentationRegistry.getInstrumentation()
+    instrumentation.runOnMainSync {
+        service.onDestroy()
+    }
+}
+
+private fun attachService(service: TranslationService, context: Context) {
+    val activityThreadClass = Class.forName("android.app.ActivityThread")
+    val currentThread = activityThreadClass.getMethod("currentActivityThread").invoke(null)
+        ?: activityThreadClass.getMethod("systemMain").invoke(null)
+    val activityManagerClass = Class.forName("android.app.ActivityManager")
+    val activityManager = activityManagerClass.getDeclaredMethod("getService").apply { isAccessible = true }
+        .invoke(null)
+    val attachMethod = android.app.Service::class.java.getDeclaredMethod(
+        "attach",
+        Context::class.java,
+        activityThreadClass,
+        String::class.java,
+        android.os.IBinder::class.java,
+        Application::class.java,
+        Object::class.java
+    )
+    attachMethod.isAccessible = true
+    val application = context.applicationContext as Application
+    attachMethod.invoke(
+        service,
+        context,
+        currentThread,
+        TranslationService::class.java.name,
+        android.os.Binder(),
+        application,
+        activityManager
+    )
 }
 
 private class FakeStreamingAsr(
@@ -148,12 +220,18 @@ private class FakeTranslationBackend : TranslationBackend {
     ): String = "MLKIT:$targetLangTag:$text"
 }
 
-private class FakeMessageClient : MessageClient {
+private class FakeMessageClient(
+    context: Context
+) : MessageClient(context, com.google.android.gms.common.api.GoogleApi.Settings.DEFAULT_SETTINGS) {
     data class SentMessage(val nodeId: String, val path: String, val bytes: ByteArray) {
-        val json: JSONObject = JSONObject(String(bytes, Charsets.UTF_8))
-        val type: String = json.optString("type")
-        val text: String = json.optString("text")
-        val seq: Int = json.optInt("seq")
+        private val json by lazy {
+            if (path != Bridge.PATH_TEXT_OUT) return@lazy null
+            runCatching { JSONObject(String(bytes, Charsets.UTF_8)) }.getOrNull()
+        }
+
+        val type: String get() = json?.optString("type").orEmpty()
+        val text: String get() = json?.optString("text").orEmpty()
+        val seq: Int get() = json?.optInt("seq") ?: 0
     }
 
     private val flow = MutableSharedFlow<SentMessage>(extraBufferCapacity = 8)
@@ -161,41 +239,71 @@ private class FakeMessageClient : MessageClient {
     suspend fun awaitMessages(count: Int, timeoutMs: Long): List<SentMessage> {
         val collected = mutableListOf<SentMessage>()
         withTimeout(timeoutMs) {
-            flow.take(count).collect { collected.add(it) }
+            flow
+                .filter { it.path == Bridge.PATH_TEXT_OUT }
+                .take(count)
+                .collect { collected.add(it) }
         }
         return collected
     }
 
-    override fun sendMessage(nodeId: String, path: String, data: ByteArray): Task<Int> {
-        val sent = SentMessage(nodeId, path, data)
+    override fun sendMessage(nodeId: String, path: String, data: ByteArray?): Task<Int> {
+        val payload = data ?: ByteArray(0)
+        val sent = SentMessage(nodeId, path, payload)
         flow.tryEmit(sent)
-        return Tasks.forResult(data.size)
+        return Tasks.forResult(payload.size)
     }
 
-    // Unused in tests
+    override fun sendMessage(
+        nodeId: String,
+        path: String,
+        data: ByteArray?,
+        options: com.google.android.gms.wearable.MessageOptions
+    ): Task<Int> = sendMessage(nodeId, path, data)
+
+    override fun sendRequest(
+        nodeId: String,
+        path: String,
+        data: ByteArray?
+    ): Task<ByteArray> = Tasks.forResult(ByteArray(0))
+
     override fun addListener(listener: MessageClient.OnMessageReceivedListener): Task<Void> =
         Tasks.forResult(null)
 
-    override fun addListener(listener: MessageClient.OnMessageReceivedListener, executor: Executor): Task<Void> =
-        Tasks.forResult(null)
+    override fun addListener(
+        listener: MessageClient.OnMessageReceivedListener,
+        uri: android.net.Uri,
+        filterType: Int
+    ): Task<Void> = Tasks.forResult(null)
+
+    override fun addRpcService(
+        service: MessageClient.RpcService,
+        path: String
+    ): Task<Void> = Tasks.forResult(null)
+
+    override fun addRpcService(
+        service: MessageClient.RpcService,
+        path: String,
+        nodeId: String
+    ): Task<Void> = Tasks.forResult(null)
 
     override fun removeListener(listener: MessageClient.OnMessageReceivedListener): Task<Boolean> =
         Tasks.forResult(true)
 
-    override fun registerMessageReceiver(service: Context, intent: Intent): Task<Void> =
-        Tasks.forResult(null)
-
-    override fun unregisterMessageReceiver(service: Context, intent: Intent): Task<Boolean> =
+    override fun removeRpcService(service: MessageClient.RpcService): Task<Boolean> =
         Tasks.forResult(true)
 }
 
-private class FakeChannelClient(private val bytes: ByteArray) : ChannelClient {
+private class FakeChannelClient(
+    context: Context,
+    private val bytes: ByteArray
+) : ChannelClient(context, com.google.android.gms.common.api.GoogleApi.Settings.DEFAULT_SETTINGS) {
     private val nodeId = "node-1"
     val channel: ChannelClient.Channel = object : ChannelClient.Channel {
-        override fun getNodeId(): String = nodeId
+        override fun getNodeId(): String = this@FakeChannelClient.nodeId
         override fun getPath(): String = Bridge.PATH_AUDIO_PCM16
-        override fun getToken(): String = "token"
-        override fun close() {}
+        override fun describeContents(): Int = 0
+        override fun writeToParcel(dest: android.os.Parcel, flags: Int) {}
     }
 
     override fun getInputStream(channel: ChannelClient.Channel): Task<InputStream> {
@@ -210,17 +318,37 @@ private class FakeChannelClient(private val bytes: ByteArray) : ChannelClient {
 
     override fun close(channel: ChannelClient.Channel, closeReason: Int): Task<Void> = Tasks.forResult(null)
 
+    override fun receiveFile(
+        channel: ChannelClient.Channel,
+        uri: android.net.Uri,
+        append: Boolean
+    ): Task<Void> = Tasks.forException(UnsupportedOperationException())
+
+    override fun registerChannelCallback(callback: ChannelClient.ChannelCallback): Task<Void> =
+        Tasks.forResult(null)
+
+    override fun registerChannelCallback(
+        channel: ChannelClient.Channel,
+        callback: ChannelClient.ChannelCallback
+    ): Task<Void> = Tasks.forResult(null)
+
+    override fun unregisterChannelCallback(callback: ChannelClient.ChannelCallback): Task<Boolean> =
+        Tasks.forResult(true)
+
+    override fun unregisterChannelCallback(
+        channel: ChannelClient.Channel,
+        callback: ChannelClient.ChannelCallback
+    ): Task<Boolean> = Tasks.forResult(true)
+
     override fun sendFile(channel: ChannelClient.Channel, uri: android.net.Uri): Task<Void> =
         Tasks.forException(UnsupportedOperationException())
 
-    override fun sendFile(channel: ChannelClient.Channel, uri: android.net.Uri, startOffset: Long, length: Long): Task<Void> =
-        Tasks.forException(UnsupportedOperationException())
-
-    override fun addListener(listener: ChannelClient.ChannelListener): Task<Void> = Tasks.forResult(null)
-
-    override fun addListener(listener: ChannelClient.ChannelListener, executor: Executor): Task<Void> = Tasks.forResult(null)
-
-    override fun removeListener(listener: ChannelClient.ChannelListener): Task<Boolean> = Tasks.forResult(true)
+    override fun sendFile(
+        channel: ChannelClient.Channel,
+        uri: android.net.Uri,
+        startOffset: Long,
+        length: Long
+    ): Task<Void> = Tasks.forException(UnsupportedOperationException())
 
     override fun getOutputStream(channel: ChannelClient.Channel): Task<java.io.OutputStream> =
         Tasks.forException(UnsupportedOperationException())

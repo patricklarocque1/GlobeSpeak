@@ -34,9 +34,9 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     private val engineState: StateFlow<EngineState> = TranslationService.engineState
         .stateIn(viewModelScope, SharingStarted.Eagerly, TranslationService.engineState.value)
 
-    val engineStatusText: StateFlow<String> = engineState
-        .map { formatEngineStatus(it) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, formatEngineStatus(engineState.value))
+    val asrStatus: StateFlow<AsrStatusBanner> = engineState
+        .map { formatAsrStatus(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, formatAsrStatus(engineState.value))
 
     val nodes: StateFlow<List<Node>> = nodeRepo.connectedNodes()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -100,26 +100,37 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
-private fun formatEngineStatus(state: EngineState): String {
+data class AsrStatusBanner(val label: String, val showImportPrompt: Boolean)
+
+private const val WHISPER_IMPORT_HINT = "Import a Whisper GGML/GGUF model"
+
+private fun formatAsrStatus(state: EngineState): AsrStatusBanner {
+    val cleanReason = state.statusReason?.takeIf { it.isNotBlank() }
     return when (state.status) {
-        EngineStatus.Ready -> "Whisper ready"
-        EngineStatus.WhisperUnavailable -> buildString {
-            append("Whisper unavailable")
-            state.statusReason?.takeIf { it.isNotBlank() }?.let {
-                append(" (")
-                append(it)
-                append(")")
+        EngineStatus.Ready -> AsrStatusBanner("Whisper ready", showImportPrompt = false)
+        EngineStatus.WhisperUnavailable -> {
+            val label = buildString {
+                append("Whisper unavailable")
+                cleanReason?.let {
+                    append(" (")
+                    append(it)
+                    append(")")
+                }
             }
+            AsrStatusBanner(label, showImportPrompt = cleanReason?.contains(WHISPER_IMPORT_HINT, ignoreCase = false) == true)
         }
-        EngineStatus.Error -> buildString {
-            append("Engine error")
-            val reason = state.statusReason ?: state.lastError
-            reason?.takeIf { it.isNotBlank() }?.let {
-                append(" (")
-                append(it)
-                append(")")
+        EngineStatus.Error -> {
+            val reason = cleanReason ?: state.lastError?.takeIf { it.isNotBlank() }
+            val label = buildString {
+                append("Engine error")
+                reason?.let {
+                    append(" (")
+                    append(it)
+                    append(")")
+                }
             }
+            AsrStatusBanner(label, showImportPrompt = false)
         }
-        EngineStatus.Unknown -> "Status unknown"
+        EngineStatus.Unknown -> AsrStatusBanner("Status unknown", showImportPrompt = false)
     }
 }

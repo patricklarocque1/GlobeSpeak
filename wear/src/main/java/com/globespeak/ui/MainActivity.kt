@@ -122,6 +122,16 @@ class MainActivity : ComponentActivity(),
                 val tag = event.data?.toString(Charsets.UTF_8) ?: return
                 vm.setTargetLang(tag)
             }
+            Bridge.PATH_STATUS_ASR -> {
+                val payload = event.data?.toString(Charsets.UTF_8) ?: return
+                runCatching { JSONObject(payload) }
+                    .onSuccess { json ->
+                        val status = json.optString("status").takeIf { it.isNotBlank() }
+                        val backend = json.optString("backend").takeIf { it.isNotBlank() }
+                        val message = if (json.has("message")) json.optString("message").takeIf { it.isNotBlank() } else null
+                        vm.updateAsrStatus(status, backend, message)
+                    }
+            }
         }
     }
 
@@ -155,7 +165,7 @@ private fun WatchScaffold(
     val capturing by vm.capturing.collectAsState()
     val items by vm.messages.collectAsState()
     val targetLang by vm.targetLang.collectAsState()
-    val engineNote by vm.engineStatusMessage.collectAsState()
+    val asrBanner by vm.asrBanner.collectAsState()
 
     Scaffold(
         timeText = {},
@@ -167,7 +177,7 @@ private fun WatchScaffold(
             verticalArrangement = Arrangement.spacedBy(6.dp),
             contentPadding = PaddingValues(bottom = 8.dp)
         ) {
-            val statusText = engineNote ?: statusLabel(status)
+            val statusText = asrBanner ?: statusLabel(status)
             item { Text(statusText) }
             item { Text("Target: ${displayLang(targetLang)}") }
             item {

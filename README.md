@@ -85,6 +85,13 @@ Whisper runs on the phone and powers streaming speech-to-text. The pipeline expe
 2. **Copy** the files into `filesDir/models/whisper/` using ADB, the device file explorer, or the in-app importer (**Settings → Languages → Whisper → Import Whisper file**).
 3. **Verify** on the Languages screen (Whisper status shows “Found” once all files are present). The translation service will switch to Whisper automatically.
 
+### Why whisper.cpp for streaming
+
+- **Real-time cadence:** GlobeSpeak mirrors the [`whisper.cpp` streaming example](https://github.com/ggerganov/whisper.cpp/tree/master/examples/stream) by sliding a 5 s window every ~0.25–0.5 s. That keeps latency low without restarting the model per partial update.
+- **Quantised models supported:** whisper.cpp happily loads GGML/GGUF quantised checkpoints, which dramatically reduce RAM/CPU while staying offline.
+- **Canonical mel front-end:** the JNI bridge locks in Whisper’s published parameters (`sample_rate=16_000`, `n_fft=400`, `n_mels=80`, `hop_length=160`). A 30 s window therefore covers 3,000 frames — exactly what OpenAI and whisper.cpp expect.
+- **Back-pressure guardrails:** if decoding lags, the native ring buffer drops the oldest samples (with a warning) so the app never deadlocks.
+
 ---
 
 ## Standard (ML Kit) Notes
@@ -100,13 +107,18 @@ Whisper runs on the phone and powers streaming speech-to-text. The pipeline expe
 ./gradlew :mobile:installDebug :wear:installDebug
 ```
 
+## Platform targets & Play policy
+- **Phone (mobile module):** `compileSdk=35`, `targetSdk=35` — compliant with Google Play’s 2025 requirement for new and updated apps.
+- **Watch (wear module):** `compileSdk=35`, `targetSdk=34` — aligned with the Wear OS policy (API 34+).
+- Document SDK bumps in the README so the split policy remains visible to future maintainers.
+
 ## Data Layer contract
-- Audio (watch → phone): `ChannelClient` at `/audio/pcm16`  — **PCM 16‑bit, 16 kHz, mono, LE**, ~320 ms frames with header `[seq:int][ts:long][size:int]` (LE).  
-- Text (phone → watch): `MessageClient` at `/text/out`  — JSON: `{ "type":"partial|final", "text":"...", "seq":N }`.  
-- Control: `MessageClient` at `/control/handshake` and `/control/heartbeat` (ping/pong).  
-- State: `DataClient` at `/settings/target_lang` and `/engine/state` for engine status.
+- Audio (watch → phone): `ChannelClient` at `/audio/pcm16` — **PCM 16‑bit, 16 kHz, mono, LE**, ~8 KB (~250 ms) frames with header `[seq:int][ts:long][size:int]` (LE). `ChannelClient` is the Wear OS‑recommended API for continuously streamed payloads; stay within the 4–32 KB chunk window for robust transport over Bluetooth/Wi‑Fi (see the [Wear OS data layer guide](https://developer.android.com/training/wearables/data-layer)).
+- Text (phone → watch): `MessageClient` at `/text/out` — JSON: `{ "type":"partial|final", "text":"...", "seq":N }`.
+- Control: `MessageClient` at `/control/handshake` and `/control/heartbeat` (ping/pong).
+- State: `DataClient` at `/settings/target_lang` and `/engine/state`, plus `MessageClient` at `/status/asr` to surface ASR availability banners on the watch.
 
 ## License & notices
 See **NOTICE** for bundled components and attributions.
-- Foreground services: Phone uses `dataSync`; Watch uses `microphone|dataSync`. Do not start microphone FGS from `BOOT_COMPLETED`.
+- Foreground services: Phone and watch run as **microphone** foreground services. Never auto-start them from `BOOT_COMPLETED`.
 - Loopback demo: On the phone app Dashboard, enter text and tap Translate — it sends the output to the watch at `/text/out`.

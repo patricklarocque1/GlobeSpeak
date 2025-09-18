@@ -8,6 +8,7 @@ object Bridge {
   const val PATH_CONTROL_HANDSHAKE = "/control/handshake"
   const val PATH_CONTROL_HEARTBEAT = "/control/heartbeat"
   const val PATH_TEXT_OUT = "/text/out"
+  const val PATH_STATUS_ASR = "/status/asr"
 
   // DataClient keys/paths
   const val PATH_SETTINGS_TARGET_LANG = "/settings/target_lang"

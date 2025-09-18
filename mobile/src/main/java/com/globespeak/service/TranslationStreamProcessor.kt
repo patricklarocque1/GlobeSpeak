@@ -15,13 +15,16 @@ internal class TranslationStreamProcessor(
     private val translator: TranslatorEngine,
     private val getTargetLanguage: suspend () -> String,
     private val sendText: suspend (type: String, text: String, seq: Int) -> Unit,
+    private val onAsrFailure: suspend (Throwable) -> StreamingAsr? = { null },
     private val log: (String, String, LogLine.Kind) -> Unit = LogBus::log
 ) {
 
     suspend fun process(input: DataInputStream, asr: StreamingAsr): Int {
         var totalFrames = 0
         var lastSeqFromHeader = 0
+        val managedAsr = mutableSetOf(asr)
         try {
+            var activeAsr = asr
             while (true) {
                 val header = ByteArray(HEADER_BYTES)
                 val read = input.read(header)
@@ -41,11 +44,28 @@ internal class TranslationStreamProcessor(
                 lastSeqFromHeader = seq
                 log(TAG, "Frame seq=$seq bytes=$size", LogLine.Kind.DATALAYER)
 
-                val partial = asr.onPcmChunk(payload)
-                sendPartialIfNeeded(partial, seq)
+                var partial: AsrPartial? = null
+                try {
+                    partial = activeAsr.onPcmChunk(payload)
+                } catch (t: Throwable) {
+                    val fallback = onAsrFailure(t) ?: throw t
+                    runCatching { activeAsr.close() }
+                    managedAsr.remove(activeAsr)
+                    managedAsr.add(fallback)
+                    activeAsr = fallback
+                    partial = activeAsr.onPcmChunk(payload)
+                }
+                partial?.let { sendPartialIfNeeded(it, seq) }
             }
 
-            val finalResult = asr.finalizeSegment()
+            val finalResult = try {
+                activeAsr.finalizeSegment()
+            } catch (t: Throwable) {
+                val fallback = onAsrFailure(t) ?: throw t
+                managedAsr.add(fallback)
+                activeAsr = fallback
+                activeAsr.finalizeSegment()
+            }
             if (finalResult.text.isNotEmpty()) {
                 val seqId = if (finalResult.sequenceId != 0) finalResult.sequenceId else lastSeqFromHeader
                 val translated = translate(finalResult.text)
@@ -54,7 +74,7 @@ internal class TranslationStreamProcessor(
             }
             log(TAG, "Stream completed frames=$totalFrames", LogLine.Kind.DATALAYER)
         } finally {
-            asr.close()
+            managedAsr.forEach { candidate -> runCatching { candidate.close() } }
         }
         return totalFrames
     }
